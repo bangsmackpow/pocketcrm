@@ -206,6 +206,7 @@ export function App() {
   const [docDiscountType, setDocDiscountType] = useState<'percentage' | 'fixed'>('percentage');
   const [docDiscountValue, setDocDiscountValue] = useState(0);
   const [docNotes, setDocNotes] = useState('');
+  const [docTerms, setDocTerms] = useState('Net 30 days');
   const [docItems, setDocItems] = useState<LineItemCalculationInput[]>([
     {
       name: 'Professional Services',
@@ -669,6 +670,7 @@ export function App() {
     setDocDiscountType('percentage');
     setDocDiscountValue(0);
     setDocNotes('');
+    setDocTerms(type === 'estimate' ? 'Valid for 30 days' : 'Net 30 days');
     setDocItems([
       {
         name: 'Professional Services',
@@ -704,6 +706,7 @@ export function App() {
       setDocDiscountType(fullDoc.discountType || 'percentage');
       setDocDiscountValue(fullDoc.discountValue || 0);
       setDocNotes(fullDoc.notes || '');
+      setDocTerms(fullDoc.terms || 'Net 30 days');
       if (fullDoc.items && fullDoc.items.length > 0) {
         setDocItems(
           fullDoc.items.map((it) => ({
@@ -744,6 +747,7 @@ export function App() {
       setDocDiscountType(fullDoc.discountType || 'percentage');
       setDocDiscountValue(fullDoc.discountValue || 0);
       setDocNotes(fullDoc.notes || '');
+      setDocTerms(fullDoc.terms || 'Net 30 days');
       if (fullDoc.items && fullDoc.items.length > 0) {
         setDocItems(
           fullDoc.items.map((it) => ({
@@ -784,6 +788,7 @@ export function App() {
             discountType: docDiscountType,
             discountValue: Number(docDiscountValue),
             notes: docNotes,
+            terms: docTerms,
             items: docItems,
           }),
         });
@@ -809,6 +814,7 @@ export function App() {
           discountType: docDiscountType,
           discountValue: Number(docDiscountValue),
           notes: docNotes,
+          terms: docTerms,
           items: docItems,
         }),
       });
@@ -2740,7 +2746,7 @@ export function App() {
         </Tabs>
       </main>
 
-      {/* New Invoice / New Quote / Edit Document Modal */}
+      {/* New Invoice / New Quote / Edit Document Full-Window Modal */}
       <Dialog open={docModalOpen} onOpenChange={setDocModalOpen}>
         <DialogModal
           title={
@@ -2752,15 +2758,16 @@ export function App() {
           }
           description={
             editingDocId
-              ? 'Modify line items, quantities, rates, discounts, and terms before final payment.'
+              ? 'Modify item contents, deliverables, scope of work, quantities, pricing, and terms.'
               : 'Atomic D1 batch parent-child insert with live line-items calculation, catalog picker, and CSV import.'
           }
-          className="max-w-4xl"
+          className="w-[96vw] max-w-[1500px] h-[92vh] max-h-[92vh] flex flex-col p-6 overflow-hidden"
         >
-          <form onSubmit={handleCreateDocument} className="space-y-4">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <form onSubmit={handleCreateDocument} className="flex flex-col flex-1 min-h-0 space-y-3">
+            {/* 1. Header Metadata Bar */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 rounded-xl border border-slate-200/90 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/60 shrink-0">
               <div>
-                <Label>Document Type</Label>
+                <Label className="text-[11px] text-slate-500 mb-1">Doc Type</Label>
                 <select
                   disabled={Boolean(editingDocId)}
                   value={docFormType}
@@ -2773,27 +2780,30 @@ export function App() {
                       )}`
                     );
                   }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:opacity-60 disabled:cursor-not-allowed dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 disabled:opacity-60 disabled:cursor-not-allowed dark:border-slate-800 dark:bg-slate-900 dark:text-white"
                 >
                   <option value="invoice">Invoice</option>
                   <option value="estimate">Estimate / Quote</option>
                 </select>
               </div>
+
               <div>
-                <Label>Document Number</Label>
+                <Label className="text-[11px] text-slate-500 mb-1">Doc Number</Label>
                 <Input
                   value={docNumber}
                   onChange={(e) => setDocNumber(e.target.value)}
                   disabled={Boolean(editingDocId)}
                   required
+                  className="text-xs py-1.5"
                 />
               </div>
-              <div className="col-span-2">
-                <Label>Client</Label>
+
+              <div className="col-span-2 sm:col-span-2 lg:col-span-2">
+                <Label className="text-[11px] text-slate-500 mb-1">Client</Label>
                 <select
                   value={docClientId}
                   onChange={(e) => setDocClientId(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
                   required
                 >
                   {clients.map((c) => (
@@ -2803,146 +2813,150 @@ export function App() {
                   ))}
                 </select>
               </div>
+
               <div>
-                <Label>Issue Date</Label>
+                <Label className="text-[11px] text-slate-500 mb-1">Issue Date</Label>
                 <Input
                   type="date"
                   value={docIssueDate}
                   onChange={(e) => setDocIssueDate(e.target.value)}
                   required
+                  className="text-xs py-1.5"
                 />
               </div>
+
               <div>
-                <Label>Due Date</Label>
+                <Label className="text-[11px] text-slate-500 mb-1">Due Date</Label>
                 <Input
                   type="date"
                   value={docDueDate}
                   onChange={(e) => setDocDueDate(e.target.value)}
                   required
+                  className="text-xs py-1.5"
                 />
               </div>
+
               <div>
-                <Label>Doc Discount Type</Label>
+                <Label className="text-[11px] text-slate-500 mb-1">Currency</Label>
                 <select
-                  value={docDiscountType}
-                  onChange={(e) =>
-                    setDocDiscountType(e.target.value as 'percentage' | 'fixed')
-                  }
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                  value={docCurrency}
+                  onChange={(e) => setDocCurrency(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
                 >
-                  <option value="percentage">Percentage (%)</option>
-                  <option value="fixed">Fixed Amount ($)</option>
+                  <option value="USD">USD ($)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="GBP">GBP (£)</option>
+                  <option value="CAD">CAD ($)</option>
                 </select>
-              </div>
-              <div>
-                <Label>Doc Discount Value</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={docDiscountValue}
-                  onChange={(e) => setDocDiscountValue(Number(e.target.value))}
-                />
               </div>
             </div>
 
-            {/* Quick Catalog Insertion Bar */}
+            {/* 2. Quick Catalog Insertion Bar */}
             {catalogItems.length > 0 && (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/70">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    <Package className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                    <span>Quick Add from Service Catalog:</span>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {catalogItems.slice(0, 4).map((cat) => (
-                      <button
-                        key={cat.id}
-                        type="button"
-                        onClick={() => handleAddFromCatalog(cat)}
-                        className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 cursor-pointer shadow-xs"
-                      >
-                        <Plus className="w-3 h-3 text-blue-600" />
-                        {cat.name} (${cat.unitPrice}/{cat.unit})
-                      </button>
-                    ))}
-                  </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-800 dark:bg-slate-950/70 shrink-0">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  <Package className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                  <span>Quick Add from Service Catalog:</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {catalogItems.slice(0, 5).map((cat) => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => handleAddFromCatalog(cat)}
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 cursor-pointer shadow-xs transition-colors"
+                    >
+                      <Plus className="w-3 h-3 text-blue-600" />
+                      {cat.name} (${cat.unitPrice}/{cat.unit})
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
 
-            {/* Line Items Engine with Embedded CSV Import & Template Download */}
-            <div className="border-t border-slate-200 dark:border-slate-800 pt-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                <Label className="mb-0">
+            {/* 3. Line Items Header */}
+            <div className="flex flex-wrap items-center justify-between gap-2 shrink-0 pt-1">
+              <div className="flex items-center gap-2">
+                <Label className="mb-0 text-sm font-bold text-slate-900 dark:text-white">
                   Line Items ({docItems.length})
                 </Label>
-
-                <div className="flex items-center gap-2">
-                  <input
-                    type="file"
-                    ref={itemCsvInputRef}
-                    onChange={handleItemCsvUpload}
-                    accept=".csv,text/csv"
-                    className="hidden"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={downloadItemsTemplate}
-                    title="Download deterministic Line Items CSV template"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    CSV Template
-                  </Button>
-
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => itemCsvInputRef.current?.click()}
-                    title="Import line items from CSV"
-                  >
-                    <Upload className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                    Import CSV
-                  </Button>
-
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      setDocItems([
-                        ...docItems,
-                        {
-                          name: 'Custom Service',
-                          description: '',
-                          quantity: 1,
-                          unit: 'hrs',
-                          unitPrice: 150,
-                          discountType: 'percentage',
-                          discountValue: 0,
-                          taxName: 'Tax',
-                          taxRate: 8.25,
-                          taxCompound: false,
-                          secondTaxRate: 0,
-                          secondTaxCompound: false,
-                        },
-                      ])
-                    }
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Add Row
-                  </Button>
-                </div>
+                <span className="text-xs text-slate-500 dark:text-slate-400 hidden sm:inline">
+                  • Detailed descriptions, deliverable contents, rates, and quantities
+                </span>
               </div>
 
-              <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
-                {docItems.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="grid grid-cols-12 gap-2 items-center rounded-xl border border-slate-200 bg-white p-2.5 dark:border-slate-800/90 dark:bg-slate-950/70"
-                  >
-                    <div className="col-span-4">
+              <div className="flex items-center gap-2">
+                <input
+                  type="file"
+                  ref={itemCsvInputRef}
+                  onChange={handleItemCsvUpload}
+                  accept=".csv,text/csv"
+                  className="hidden"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={downloadItemsTemplate}
+                  title="Download deterministic Line Items CSV template"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  CSV Template
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => itemCsvInputRef.current?.click()}
+                  title="Import line items from CSV"
+                >
+                  <Upload className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                  Import CSV
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  onClick={() =>
+                    setDocItems([
+                      ...docItems,
+                      {
+                        name: 'Custom Service / Deliverable',
+                        description: '',
+                        quantity: 1,
+                        unit: 'hrs',
+                        unitPrice: 150,
+                        discountType: 'percentage',
+                        discountValue: 0,
+                        taxName: 'Tax',
+                        taxRate: 8.25,
+                        taxCompound: false,
+                        secondTaxRate: 0,
+                        secondTaxCompound: false,
+                      },
+                    ])
+                  }
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add Item Row
+                </Button>
+              </div>
+            </div>
+
+            {/* 4. Full-Window Scrollable Line Items Workspace */}
+            <div className="flex-1 min-h-[260px] overflow-y-auto space-y-3 p-3 rounded-xl border border-slate-200/90 bg-slate-100/60 dark:border-slate-800 dark:bg-slate-950/40">
+              {docItems.map((item, idx) => (
+                <div
+                  key={idx}
+                  className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-xs transition-colors dark:border-slate-800 dark:bg-slate-900 space-y-2.5"
+                >
+                  {/* Top Row: Name, Quantity, Unit, Unit Price, Tax Rate, Line Total & Remove */}
+                  <div className="grid grid-cols-12 gap-2.5 items-end">
+                    <div className="col-span-12 lg:col-span-4">
+                      <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                        Item / Service Name *
+                      </Label>
                       <Input
                         value={item.name}
                         onChange={(e) => {
@@ -2950,11 +2964,16 @@ export function App() {
                           next[idx] = { ...item, name: e.target.value };
                           setDocItems(next);
                         }}
-                        placeholder="Item name"
+                        placeholder="Item or service name (e.g. Dedicated Cloud Infrastructure)"
                         required
+                        className="text-xs"
                       />
                     </div>
-                    <div className="col-span-2">
+
+                    <div className="col-span-4 sm:col-span-2 lg:col-span-2">
+                      <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                        Quantity
+                      </Label>
                       <Input
                         type="number"
                         step="0.01"
@@ -2967,10 +2986,31 @@ export function App() {
                           };
                           setDocItems(next);
                         }}
-                        placeholder="Qty"
+                        placeholder="1"
+                        className="text-xs"
                       />
                     </div>
-                    <div className="col-span-2">
+
+                    <div className="col-span-4 sm:col-span-2 lg:col-span-1">
+                      <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                        Unit
+                      </Label>
+                      <Input
+                        value={item.unit || 'hrs'}
+                        onChange={(e) => {
+                          const next = [...docItems];
+                          next[idx] = { ...item, unit: e.target.value };
+                          setDocItems(next);
+                        }}
+                        placeholder="hrs"
+                        className="text-xs"
+                      />
+                    </div>
+
+                    <div className="col-span-4 sm:col-span-2 lg:col-span-2">
+                      <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                        Unit Price ($)
+                      </Label>
                       <Input
                         type="number"
                         step="0.01"
@@ -2983,10 +3023,15 @@ export function App() {
                           };
                           setDocItems(next);
                         }}
-                        placeholder="Unit Price"
+                        placeholder="150.00"
+                        className="text-xs"
                       />
                     </div>
-                    <div className="col-span-2">
+
+                    <div className="col-span-4 sm:col-span-2 lg:col-span-1">
+                      <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                        Tax (%)
+                      </Label>
                       <Input
                         type="number"
                         step="0.01"
@@ -2999,11 +3044,45 @@ export function App() {
                           };
                           setDocItems(next);
                         }}
-                        placeholder="Tax %"
+                        placeholder="8.25"
+                        className="text-xs"
                       />
                     </div>
-                    <div className="col-span-2 flex items-center justify-end gap-2">
-                      <label className="flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400 cursor-pointer">
+
+                    <div className="col-span-8 sm:col-span-4 lg:col-span-2 flex items-center justify-end gap-3 pb-0.5">
+                      <div className="text-right">
+                        <div className="text-[10px] uppercase font-semibold text-slate-400">
+                          Line Total
+                        </div>
+                        <div className="text-sm font-bold text-slate-900 dark:text-white">
+                          ${(
+                            liveCalculation.items[idx]?.lineTotal ??
+                            item.quantity * item.unitPrice
+                          ).toFixed(2)}
+                        </div>
+                      </div>
+                      {docItems.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDocItems(docItems.filter((_, i) => i !== idx))
+                          }
+                          className="text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 p-2 rounded-lg cursor-pointer transition-colors"
+                          title="Remove line item"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Bottom Row: Detailed Description / Deliverables / Contents Editor */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0">
+                        Item Description & Scope of Work / Contents
+                      </Label>
+                      <label className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 cursor-pointer">
                         <input
                           type="checkbox"
                           checked={Boolean(item.secondTaxCompound)}
@@ -3016,62 +3095,106 @@ export function App() {
                             };
                             setDocItems(next);
                           }}
+                          className="rounded text-blue-600 focus:ring-blue-500"
                         />
-                        +5% C.
+                        Compound Tax (+5%)
                       </label>
-                      {docItems.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setDocItems(docItems.filter((_, i) => i !== idx))
-                          }
-                          className="text-rose-600 dark:text-rose-400 hover:text-rose-700 p-1 cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
+                    </div>
+                    <textarea
+                      rows={2}
+                      value={item.description || ''}
+                      onChange={(e) => {
+                        const next = [...docItems];
+                        next[idx] = { ...item, description: e.target.value };
+                        setDocItems(next);
+                      }}
+                      placeholder="Detailed item description, specific deliverables, scope of work, technical specifications, or milestone notes..."
+                      className="w-full rounded-lg border border-slate-300 bg-slate-50/60 px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-950/70 dark:text-slate-100 dark:focus:bg-slate-950"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* 5. Docked Footer: Notes, Terms, Live Totals & Action Buttons */}
+            <div className="shrink-0 space-y-3 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-center">
+                {/* Notes and Terms Inputs */}
+                <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                      Public Notes & Remittance Advice
+                    </Label>
+                    <textarea
+                      rows={2}
+                      value={docNotes}
+                      onChange={(e) => setDocNotes(e.target.value)}
+                      placeholder="e.g. Q4 dedicated sprint retainer. Wire transfer reference..."
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                      Payment Terms & Conditions
+                    </Label>
+                    <textarea
+                      rows={2}
+                      value={docTerms}
+                      onChange={(e) => setDocTerms(e.target.value)}
+                      placeholder="e.g. Net 30 days. Late balances accrue 1.5% interest."
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                </div>
+
+                {/* Live Calculated Grand Summary */}
+                <div className="lg:col-span-5 rounded-xl bg-slate-100 p-3.5 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 flex items-center justify-between">
+                  <div className="space-y-1 text-xs text-slate-600 dark:text-slate-400">
+                    <div>
+                      Subtotal:{' '}
+                      <strong className="text-slate-900 dark:text-slate-200">
+                        ${liveCalculation.subtotal.toFixed(2)}
+                      </strong>
+                    </div>
+                    {liveCalculation.discountTotal > 0 && (
+                      <div>
+                        Discount:{' '}
+                        <strong className="text-amber-600 dark:text-amber-400">
+                          -${liveCalculation.discountTotal.toFixed(2)}
+                        </strong>
+                      </div>
+                    )}
+                    <div>
+                      Tax Total:{' '}
+                      <strong className="text-sky-600 dark:text-sky-400">
+                        +${liveCalculation.taxTotal.toFixed(2)}
+                      </strong>
                     </div>
                   </div>
-                ))}
+                  <div className="text-right">
+                    <div className="text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400">
+                      Calculated Total
+                    </div>
+                    <div className="text-2xl font-black text-slate-900 dark:text-white">
+                      {docCurrency} ${liveCalculation.total.toFixed(2)}
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
 
-            {/* Live Calculated Summary */}
-            <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl bg-slate-100 p-4 border border-slate-200 dark:bg-slate-950 dark:border-slate-800">
-              <div className="space-y-1 text-xs text-slate-600 dark:text-slate-400">
-                <div>
-                  Subtotal:{' '}
-                  <strong className="text-slate-900 dark:text-slate-200">
-                    ${liveCalculation.subtotal.toFixed(2)}
-                  </strong>
-                </div>
-                <div>
-                  Discount Total:{' '}
-                  <strong className="text-amber-600 dark:text-amber-400">
-                    -${liveCalculation.discountTotal.toFixed(2)}
-                  </strong>
-                </div>
-                <div>
-                  Tax Total:{' '}
-                  <strong className="text-sky-600 dark:text-sky-400">
-                    +${liveCalculation.taxTotal.toFixed(2)}
-                  </strong>
-                </div>
+              {/* Action Buttons */}
+              <div className="flex items-center justify-between pt-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setDocModalOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" className="px-6">
+                  {editingDocId ? 'Save & Update Document' : 'Commit Document to D1'}
+                </Button>
               </div>
-              <div className="text-right">
-                <div className="text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  Calculated Grand Total
-                </div>
-                <div className="text-2xl font-black text-slate-900 dark:text-white">
-                  {docCurrency} ${liveCalculation.total.toFixed(2)}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <Button type="submit" variant="primary">
-                {editingDocId ? 'Save & Update Document' : 'Commit Document to D1'}
-              </Button>
             </div>
           </form>
         </DialogModal>
