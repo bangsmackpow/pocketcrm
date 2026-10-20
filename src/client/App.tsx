@@ -17,9 +17,11 @@ import {
   Trash2,
   LogOut,
   Upload,
-  User,
   KeyRound,
   FileSpreadsheet,
+  Users,
+  Edit2,
+  Lock,
 } from 'lucide-react';
 import {
   Button,
@@ -38,9 +40,14 @@ import {
 import {
   apiFetch,
   signInEmail,
-  signUpEmail,
   signOut,
+  fetchUsers,
+  createManagedUser,
+  updateManagedUser,
+  resetManagedUserPassword,
+  deleteManagedUser,
   type AuthUser,
+  type ManagedUser,
   type ClientDto,
   type DocumentDto,
   type TemplateDto,
@@ -81,20 +88,40 @@ export function App() {
   const [estimates, setEstimates] = useState<DocumentDto[]>([]);
   const [invoices, setInvoices] = useState<DocumentDto[]>([]);
   const [templates, setTemplates] = useState<TemplateDto[]>([]);
+  const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [bannerMsg, setBannerMsg] = useState<{
     type: 'success' | 'error';
     text: string;
   } | null>(null);
 
-  // Auth Form State (Sign In / Sign Up)
-  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
+  // Clean Login Form State (No registration, no credentials printed)
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
-  const [authName, setAuthName] = useState('');
-  const [authRole, setAuthRole] = useState<'admin' | 'member' | 'viewer'>('admin');
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+
+  // User Manager Modals & Forms State
+  const [newUserModalOpen, setNewUserModalOpen] = useState(false);
+  const [newUserData, setNewUserData] = useState({
+    name: '',
+    email: '',
+    password: '',
+    role: 'member' as 'admin' | 'member' | 'viewer',
+  });
+
+  const [editUserModalOpen, setEditUserModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
+  const [editUserData, setEditUserData] = useState({
+    name: '',
+    email: '',
+    role: 'member' as 'admin' | 'member' | 'viewer',
+    banned: false,
+  });
+
+  const [resetPwModalOpen, setResetPwModalOpen] = useState(false);
+  const [resetPwUser, setResetPwUser] = useState<ManagedUser | null>(null);
+  const [newPasswordInput, setNewPasswordInput] = useState('');
 
   // New Client Modal State
   const [clientModalOpen, setClientModalOpen] = useState(false);
@@ -118,7 +145,9 @@ export function App() {
   const [clientImportModalOpen, setClientImportModalOpen] = useState(false);
   const [clientCsvText, setClientCsvText] = useState('');
   const [clientImporting, setClientImporting] = useState(false);
-  const [clientImportErrors, setClientImportErrors] = useState<Array<{ rowNumber: number; field: string; message: string }>>([]);
+  const [clientImportErrors, setClientImportErrors] = useState<
+    Array<{ rowNumber: number; field: string; message: string }>
+  >([]);
 
   // New Document (Estimate / Invoice) Composer State
   const [docModalOpen, setDocModalOpen] = useState(false);
@@ -176,19 +205,33 @@ export function App() {
     if (!currentUser) return;
     setLoading(true);
     try {
-      const [dashRes, cliRes, estRes, invRes, tplRes] = await Promise.all([
+      const isManagerOrAdmin = currentUser.role === 'admin' || currentUser.role === 'member';
+
+      const promises: [
+        Promise<DashboardData>,
+        Promise<{ clients: ClientDto[] }>,
+        Promise<{ estimates: DocumentDto[] }>,
+        Promise<{ invoices: DocumentDto[] }>,
+        Promise<{ templates: TemplateDto[] }>,
+        Promise<ManagedUser[]>
+      ] = [
         apiFetch<DashboardData>('/api/dashboard'),
         apiFetch<{ clients: ClientDto[] }>('/api/clients'),
         apiFetch<{ estimates: DocumentDto[] }>('/api/estimates'),
         apiFetch<{ invoices: DocumentDto[] }>('/api/invoices'),
         apiFetch<{ templates: TemplateDto[] }>('/api/templates'),
-      ]);
+        isManagerOrAdmin ? fetchUsers() : Promise.resolve([]),
+      ];
+
+      const [dashRes, cliRes, estRes, invRes, tplRes, usersRes] = await Promise.all(promises);
 
       setDashboard(dashRes);
       setClients(cliRes.clients || []);
       setEstimates(estRes.estimates || []);
       setInvoices(invRes.invoices || []);
       setTemplates(tplRes.templates || []);
+      setManagedUsers(usersRes || []);
+
       if (cliRes.clients?.length && !docClientId) {
         setDocClientId(cliRes.clients[0].id);
       }
@@ -212,28 +255,20 @@ export function App() {
     }
   }, [currentUser, refreshWorkspace]);
 
-  // Auth Handlers
+  // Auth Submit (Sign In Only)
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthSubmitting(true);
     setAuthError(null);
 
     try {
-      if (authMode === 'signin') {
-        await signInEmail(authEmail, authPassword);
-      } else {
-        await signUpEmail(authName, authEmail, authPassword, authRole);
-      }
+      await signInEmail(authEmail, authPassword);
       const user = await checkAuth();
       if (user) {
-        notify('success', `Welcome back, ${user.name}! Authenticated as ${user.role.toUpperCase()}.`);
-      } else {
-        // Fallback check
-        const me = await apiFetch<{ user: AuthUser | null }>('/api/auth/me');
-        setCurrentUser(me.user);
+        notify('success', `Welcome back, ${user.name}!`);
       }
     } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Authentication failed');
+      setAuthError(err instanceof Error ? err.message : 'Invalid email or password.');
     } finally {
       setAuthSubmitting(false);
     }
@@ -246,6 +281,61 @@ export function App() {
       notify('success', 'Signed out successfully.');
     } catch (err) {
       notify('error', err instanceof Error ? err.message : 'Sign out failed');
+    }
+  };
+
+  // User Management Actions
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await createManagedUser(newUserData);
+      setNewUserModalOpen(false);
+      setNewUserData({ name: '', email: '', password: '', role: 'member' });
+      notify('success', `User ${newUserData.name} created successfully.`);
+      await refreshWorkspace();
+    } catch (err) {
+      notify('error', err instanceof Error ? err.message : 'Failed to create user');
+    }
+  };
+
+  const handleUpdateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    try {
+      await updateManagedUser(editingUser.id, editUserData);
+      setEditUserModalOpen(false);
+      setEditingUser(null);
+      notify('success', `User ${editUserData.name} updated successfully.`);
+      await refreshWorkspace();
+    } catch (err) {
+      notify('error', err instanceof Error ? err.message : 'Failed to update user');
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetPwUser) return;
+    try {
+      await resetManagedUserPassword(resetPwUser.id, newPasswordInput);
+      setResetPwModalOpen(false);
+      setResetPwUser(null);
+      setNewPasswordInput('');
+      notify('success', `Password reset successfully for ${resetPwUser.email}.`);
+    } catch (err) {
+      notify('error', err instanceof Error ? err.message : 'Failed to reset password');
+    }
+  };
+
+  const handleDeleteUser = async (user: ManagedUser) => {
+    if (!confirm(`Are you sure you want to delete user ${user.name} (${user.email})?`)) {
+      return;
+    }
+    try {
+      await deleteManagedUser(user.id);
+      notify('success', `User ${user.name} deleted.`);
+      await refreshWorkspace();
+    } catch (err) {
+      notify('error', err instanceof Error ? err.message : 'Failed to delete user');
     }
   };
 
@@ -302,13 +392,13 @@ export function App() {
     setClientImporting(true);
     setClientImportErrors([]);
     try {
-      const res = await apiFetch<{ importedCount: number; errors: Array<{ rowNumber: number; field: string; message: string }> }>(
-        '/api/clients/import-csv',
-        {
-          method: 'POST',
-          body: JSON.stringify({ csvText: clientCsvText }),
-        }
-      );
+      const res = await apiFetch<{
+        importedCount: number;
+        errors: Array<{ rowNumber: number; field: string; message: string }>;
+      }>('/api/clients/import-csv', {
+        method: 'POST',
+        body: JSON.stringify({ csvText: clientCsvText }),
+      });
       if (res.errors?.length > 0) {
         setClientImportErrors(res.errors);
       }
@@ -481,10 +571,7 @@ export function App() {
       const res = await apiFetch<{ invoice: DocumentDto }>(`/api/estimates/${id}/convert`, {
         method: 'POST',
       });
-      notify(
-        'success',
-        `Estimate converted to Invoice ${res.invoice.documentNumber}!`
-      );
+      notify('success', `Estimate converted to Invoice ${res.invoice.documentNumber}!`);
       await refreshWorkspace();
       setActiveTab('invoices');
     } catch (err) {
@@ -515,7 +602,10 @@ export function App() {
           reference: `ACH-${Date.now().toString().slice(-5)}`,
         }),
       });
-      notify('success', `Recorded payment of ${inv.currency} ${partialAmount.toFixed(2)} for ${inv.documentNumber}`);
+      notify(
+        'success',
+        `Recorded payment of ${inv.currency} ${partialAmount.toFixed(2)} for ${inv.documentNumber}`
+      );
       await refreshWorkspace();
     } catch (err) {
       notify('error', err instanceof Error ? err.message : 'Payment recording failed');
@@ -549,7 +639,7 @@ export function App() {
     );
   }
 
-  // 2. Unauthenticated State: Real Login & Sign Up Screen (No Auto-Login)
+  // 2. Unauthenticated State: Clean Login Screen (No public registration, no credentials printed)
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center px-4 py-12">
@@ -562,42 +652,11 @@ export function App() {
               PocketCRM Edge
             </h1>
             <p className="text-xs text-slate-400 mt-1">
-              Production CRM, Quoting & Invoicing on Cloudflare Workers, D1 & R2
+              Sign in to access your CRM, Quoting & Invoicing workspace
             </p>
           </div>
 
           <Card className="p-6 border-slate-800 bg-slate-900/90 shadow-2xl">
-            <div className="flex rounded-lg bg-slate-950 p-1 mb-6 border border-slate-800">
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthMode('signin');
-                  setAuthError(null);
-                }}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
-                  authMode === 'signin'
-                    ? 'bg-blue-600 text-white shadow'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Sign In
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthMode('signup');
-                  setAuthError(null);
-                }}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
-                  authMode === 'signup'
-                    ? 'bg-blue-600 text-white shadow'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Create Account
-              </button>
-            </div>
-
             {authError && (
               <div className="mb-4 flex items-center gap-2 rounded-lg border border-rose-500/40 bg-rose-950/60 p-3 text-xs text-rose-200">
                 <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
@@ -606,43 +665,14 @@ export function App() {
             )}
 
             <form onSubmit={handleAuthSubmit} className="space-y-4">
-              {authMode === 'signup' && (
-                <>
-                  <div>
-                    <Label>Full Name</Label>
-                    <div className="relative">
-                      <Input
-                        type="text"
-                        value={authName}
-                        onChange={(e) => setAuthName(e.target.value)}
-                        placeholder="Elena Vance"
-                        required
-                      />
-                      <User className="w-4 h-4 text-slate-500 absolute right-3 top-2.5" />
-                    </div>
-                  </div>
-                  <div>
-                    <Label>Role</Label>
-                    <select
-                      value={authRole}
-                      onChange={(e) => setAuthRole(e.target.value as 'admin' | 'member' | 'viewer')}
-                      className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
-                    >
-                      <option value="admin">Admin (Full Access & Template Studio)</option>
-                      <option value="member">Member (Create/Edit Documents & Clients)</option>
-                      <option value="viewer">Viewer (Read-Only & Audit Logs)</option>
-                    </select>
-                  </div>
-                </>
-              )}
-
               <div>
                 <Label>Email Address</Label>
                 <Input
                   type="email"
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
-                  placeholder="admin@pocketcrm.dev"
+                  placeholder="name@company.com"
+                  autoComplete="email"
                   required
                 />
               </div>
@@ -655,6 +685,7 @@ export function App() {
                     value={authPassword}
                     onChange={(e) => setAuthPassword(e.target.value)}
                     placeholder="••••••••••••"
+                    autoComplete="current-password"
                     required
                   />
                   <KeyRound className="w-4 h-4 text-slate-500 absolute right-3 top-2.5" />
@@ -669,29 +700,23 @@ export function App() {
               >
                 {authSubmitting ? (
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                ) : authMode === 'signin' ? (
-                  'Sign In to PocketCRM'
                 ) : (
-                  'Create Secure Account'
+                  'Sign In'
                 )}
               </Button>
             </form>
-
-            <div className="mt-6 border-t border-slate-800/80 pt-4 text-center">
-              <p className="text-[11px] text-slate-400">
-                Seeded Admin Credentials: <strong className="text-blue-400">admin@pocketcrm.dev</strong> / <code className="text-slate-300">Admin123!@#</code>
-              </p>
-            </div>
           </Card>
         </div>
       </div>
     );
   }
 
-  // 3. Authenticated State: Full Workspace
+  const isManagerOrAdmin = currentUser.role === 'admin' || currentUser.role === 'member';
+
+  // 3. Authenticated State: Full Workspace with User Manager
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
-      {/* Top Edge Header with Real User Session */}
+      {/* Top Header */}
       <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -708,7 +733,7 @@ export function App() {
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Edge CRM, Quoting & Invoicing Engine • Better Auth RBAC
+                Edge CRM, Quoting & Invoicing Engine
               </p>
             </div>
           </div>
@@ -797,6 +822,12 @@ export function App() {
                 <Receipt className="w-3.5 h-3.5" />
                 Invoices ({invoices.length})
               </TabsTrigger>
+              {isManagerOrAdmin && (
+                <TabsTrigger value="users">
+                  <Users className="w-3.5 h-3.5" />
+                  User Manager ({managedUsers.length})
+                </TabsTrigger>
+              )}
               <TabsTrigger value="templates">
                 <Palette className="w-3.5 h-3.5" />
                 Document Templates
@@ -1479,7 +1510,304 @@ export function App() {
             </Card>
           </TabsContent>
 
-          {/* 5. CONFIGURABLE DOCUMENT TEMPLATES TAB */}
+          {/* 5. USER MANAGER TAB (Admin & Member/Manager Access) */}
+          {isManagerOrAdmin && (
+            <TabsContent value="users">
+              <Card className="p-5">
+                <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+                  <div>
+                    <h2 className="text-base font-bold text-white">
+                      Team & User Manager
+                    </h2>
+                    <p className="text-xs text-slate-400">
+                      Manage team accounts, edit user profiles, assign RBAC roles, and reset credentials.
+                    </p>
+                  </div>
+
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => {
+                      setNewUserData({ name: '', email: '', password: '', role: 'member' });
+                      setNewUserModalOpen(true);
+                    }}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    New User
+                  </Button>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-xs uppercase text-slate-400">
+                        <th className="py-3 px-3">Name</th>
+                        <th className="py-3 px-3">Email</th>
+                        <th className="py-3 px-3">Role</th>
+                        <th className="py-3 px-3">Status</th>
+                        <th className="py-3 px-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {managedUsers.map((user) => (
+                        <tr key={user.id} className="hover:bg-slate-800/30">
+                          <td className="py-3 px-3 font-semibold text-white">
+                            {user.name}
+                            {user.id === currentUser.id && (
+                              <span className="ml-2 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
+                                You
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 text-slate-300 font-mono text-xs">
+                            {user.email}
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase bg-blue-950 text-blue-300 border border-blue-800/60">
+                              {user.role}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3">
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold uppercase ${
+                                user.banned
+                                  ? 'bg-rose-950 text-rose-300 border border-rose-800/60'
+                                  : 'bg-emerald-950 text-emerald-300 border border-emerald-800/60'
+                              }`}
+                            >
+                              {user.banned ? 'Suspended' : 'Active'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-right">
+                            <div className="inline-flex items-center gap-1.5 justify-end">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setEditingUser(user);
+                                  setEditUserData({
+                                    name: user.name,
+                                    email: user.email,
+                                    role: user.role,
+                                    banned: Boolean(user.banned),
+                                  });
+                                  setEditUserModalOpen(true);
+                                }}
+                                title="Edit user info"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                                Edit
+                              </Button>
+
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => {
+                                  setResetPwUser(user);
+                                  setNewPasswordInput('');
+                                  setResetPwModalOpen(true);
+                                }}
+                                title="Reset user password"
+                              >
+                                <Lock className="w-3 h-3 text-amber-400" />
+                                Reset PW
+                              </Button>
+
+                              {currentUser.role === 'admin' && user.id !== currentUser.id && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleDeleteUser(user)}
+                                  className="text-rose-400 hover:text-rose-300 p-1.5 rounded hover:bg-slate-800 transition-colors"
+                                  title="Delete user"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+
+              {/* Create User Modal */}
+              <Dialog open={newUserModalOpen} onOpenChange={setNewUserModalOpen}>
+                <DialogModal
+                  title="Create New User"
+                  description="Add a team member account and set their role and initial password."
+                >
+                  <form onSubmit={handleCreateUser} className="space-y-4">
+                    <div>
+                      <Label>Full Name</Label>
+                      <Input
+                        type="text"
+                        value={newUserData.name}
+                        onChange={(e) =>
+                          setNewUserData({ ...newUserData, name: e.target.value })
+                        }
+                        placeholder="Sarah Connor"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <Label>Email Address</Label>
+                      <Input
+                        type="email"
+                        value={newUserData.email}
+                        onChange={(e) =>
+                          setNewUserData({ ...newUserData, email: e.target.value })
+                        }
+                        placeholder="sarah@company.com"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <Label>Role</Label>
+                      <select
+                        value={newUserData.role}
+                        onChange={(e) =>
+                          setNewUserData({
+                            ...newUserData,
+                            role: e.target.value as 'admin' | 'member' | 'viewer',
+                          })
+                        }
+                        className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                      >
+                        <option value="admin">Admin (Full Access & Templates)</option>
+                        <option value="member">Member / Manager (Manage Docs & Clients)</option>
+                        <option value="viewer">Viewer (Read-Only & Auditing)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <Label>Initial Password (min 8 characters)</Label>
+                      <Input
+                        type="password"
+                        value={newUserData.password}
+                        onChange={(e) =>
+                          setNewUserData({ ...newUserData, password: e.target.value })
+                        }
+                        placeholder="••••••••••••"
+                        minLength={8}
+                        required
+                      />
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-2">
+                      <Button type="submit" variant="primary">
+                        Create Account
+                      </Button>
+                    </div>
+                  </form>
+                </DialogModal>
+              </Dialog>
+
+              {/* Edit User Modal */}
+              <Dialog open={editUserModalOpen} onOpenChange={setEditUserModalOpen}>
+                <DialogModal
+                  title="Edit User Profile"
+                  description={`Update details and permissions for ${editingUser?.name || 'user'}.`}
+                >
+                  <form onSubmit={handleUpdateUser} className="space-y-4">
+                    <div>
+                      <Label>Full Name</Label>
+                      <Input
+                        type="text"
+                        value={editUserData.name}
+                        onChange={(e) =>
+                          setEditUserData({ ...editUserData, name: e.target.value })
+                        }
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <Label>Email Address</Label>
+                      <Input
+                        type="email"
+                        value={editUserData.email}
+                        onChange={(e) =>
+                          setEditUserData({ ...editUserData, email: e.target.value })
+                        }
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <Label>Role</Label>
+                      <select
+                        value={editUserData.role}
+                        onChange={(e) =>
+                          setEditUserData({
+                            ...editUserData,
+                            role: e.target.value as 'admin' | 'member' | 'viewer',
+                          })
+                        }
+                        className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                      >
+                        <option value="admin">Admin (Full Access & Templates)</option>
+                        <option value="member">Member / Manager (Manage Docs & Clients)</option>
+                        <option value="viewer">Viewer (Read-Only & Auditing)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer pt-1">
+                        <input
+                          type="checkbox"
+                          checked={editUserData.banned}
+                          onChange={(e) =>
+                            setEditUserData({ ...editUserData, banned: e.target.checked })
+                          }
+                        />
+                        Suspend / Ban this user account
+                      </label>
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-2">
+                      <Button type="submit" variant="primary">
+                        Save Changes
+                      </Button>
+                    </div>
+                  </form>
+                </DialogModal>
+              </Dialog>
+
+              {/* Reset Password Modal */}
+              <Dialog open={resetPwModalOpen} onOpenChange={setResetPwModalOpen}>
+                <DialogModal
+                  title="Reset User Password"
+                  description={`Set a new password for ${resetPwUser?.email}.`}
+                >
+                  <form onSubmit={handleResetPassword} className="space-y-4">
+                    <div>
+                      <Label>New Password (min 8 characters)</Label>
+                      <Input
+                        type="password"
+                        value={newPasswordInput}
+                        onChange={(e) => setNewPasswordInput(e.target.value)}
+                        placeholder="••••••••••••"
+                        minLength={8}
+                        required
+                      />
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-2">
+                      <Button type="submit" variant="primary">
+                        Update Password
+                      </Button>
+                    </div>
+                  </form>
+                </DialogModal>
+              </Dialog>
+            </TabsContent>
+          )}
+
+          {/* 6. CONFIGURABLE DOCUMENT TEMPLATES TAB */}
           <TabsContent value="templates">
             {editingTemplate && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -6,6 +6,16 @@ export interface AuthUser {
   banned?: boolean;
 }
 
+export interface ManagedUser {
+  id: string;
+  name: string;
+  email: string;
+  role: 'admin' | 'member' | 'viewer';
+  banned: boolean;
+  createdAt: string | number;
+  updatedAt: string | number;
+}
+
 export interface ClientDto {
   id: string;
   code: string;
@@ -112,21 +122,59 @@ export async function signInEmail(email: string, password: string): Promise<void
   });
 }
 
-export async function signUpEmail(
-  name: string,
-  email: string,
-  password: string,
-  role = 'admin'
-): Promise<void> {
-  await apiFetch('/api/auth/sign-up/email', {
-    method: 'POST',
-    body: JSON.stringify({ name, email, password, role }),
-  });
-}
-
 export async function signOut(): Promise<void> {
   await apiFetch('/api/auth/sign-out', {
     method: 'POST',
     body: JSON.stringify({}),
+  });
+}
+
+export async function fetchUsers(): Promise<ManagedUser[]> {
+  const res = await apiFetch<{ users: ManagedUser[] }>('/api/auth/users');
+  return res.users || [];
+}
+
+export async function createManagedUser(data: {
+  name: string;
+  email: string;
+  password: string;
+  role: 'admin' | 'member' | 'viewer';
+}): Promise<ManagedUser> {
+  const res = await apiFetch<{ user: ManagedUser }>('/api/auth/users', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  return res.user;
+}
+
+export async function updateManagedUser(
+  id: string,
+  data: {
+    name?: string;
+    email?: string;
+    role?: 'admin' | 'member' | 'viewer';
+    banned?: boolean;
+  }
+): Promise<ManagedUser> {
+  const res = await apiFetch<{ user: ManagedUser }>(`/api/auth/users/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+  return res.user;
+}
+
+export async function resetManagedUserPassword(
+  id: string,
+  newPassword: string
+): Promise<void> {
+  await apiFetch(`/api/auth/users/${id}/reset-password`, {
+    method: 'POST',
+    body: JSON.stringify({ newPassword }),
+  });
+}
+
+export async function deleteManagedUser(id: string): Promise<void> {
+  await apiFetch(`/api/auth/users/${id}`, {
+    method: 'DELETE',
   });
 }
