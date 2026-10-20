@@ -19,6 +19,22 @@ import { recordAuditLog } from '../lib/audit';
 
 export const importRoutes = new Hono<AppEnv>();
 
+export const ITEMS_CSV_TEMPLATE = `Item Name,Description,Quantity,Unit,Unit Price,Tax Rate,Compound Tax
+Cloudflare Workers Edge Engineering,High availability D1 + R2 infrastructure,40,hrs,150.00,8.25,false
+Security & Compliance Review,RBAC audit and endpoint hardening,10,hrs,200.00,8.25,false`;
+
+/**
+ * Download CSV template for line items import
+ */
+importRoutes.get('/items-template', requireRole('viewer'), (c) => {
+  return new Response(ITEMS_CSV_TEMPLATE, {
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="pocketcrm_items_template.csv"',
+    },
+  });
+});
+
 /**
  * Download the deterministic CSV template for bulk Quotes & Invoices import
  */

@@ -1,7 +1,6 @@
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { createMiddleware } from 'hono/factory';
-import { eq } from 'drizzle-orm';
 import { createD1Client, type AppDatabase } from '../db/client';
 import * as schema from '../db/schema';
 import type { UserRole } from '../db/schema';
@@ -33,7 +32,7 @@ export type AppEnv = {
 };
 
 /**
- * Initializes a Better Auth instance bound to the request's Cloudflare D1 database via Drizzle.
+ * Initializes a Better Auth instance bound to Cloudflare D1 via Drizzle.
  */
 export function createAuth(env: CloudflareBindings) {
   const db = createD1Client(env.DB);
@@ -58,9 +57,9 @@ export function createAuth(env: CloudflareBindings) {
       additionalFields: {
         role: {
           type: 'string',
-          required: true,
+          required: false,
           defaultValue: 'member',
-          input: false,
+          input: true,
         },
         banned: {
           type: 'boolean',
@@ -84,8 +83,8 @@ export function hasMinimumRole(userRole: UserRole, requiredRole: UserRole): bool
 }
 
 /**
- * Middleware that attaches the Drizzle D1 client and resolves the Better Auth session.
- * Also supports `x-demo-user-id` for quick interactive persona switching in demo/development mode.
+ * Middleware that attaches the Drizzle D1 client and resolves the real Better Auth session.
+ * Strictly verifies the session cookie/bearer token without any artificial auto-login.
  */
 export const sessionMiddleware = createMiddleware<AppEnv>(async (c, next) => {
   const db = createD1Client(c.env.DB);
@@ -108,30 +107,7 @@ export const sessionMiddleware = createMiddleware<AppEnv>(async (c, next) => {
       };
     }
   } catch {
-    // Fallback to persona header or unauthenticated
-  }
-
-  if (!resolvedUser) {
-    const demoUserId = c.req.header('x-demo-user-id');
-    if (demoUserId) {
-      try {
-        const [found] = await db
-          .select()
-          .from(schema.users)
-          .where(eq(schema.users.id, demoUserId))
-          .limit(1);
-        if (found && !found.banned) {
-          resolvedUser = {
-            id: found.id,
-            name: found.name,
-            email: found.email,
-            role: found.role,
-          };
-        }
-      } catch {
-        // Ignore if table not yet initialized
-      }
-    }
+    // Unauthenticated
   }
 
   c.set('user', resolvedUser);
@@ -148,7 +124,7 @@ export function requireRole(minimumRole: UserRole) {
       return c.json(
         {
           error: 'Unauthorized',
-          message: 'Authentication required to access this resource.',
+          message: 'Authentication required. Please sign in.',
         },
         401
       );

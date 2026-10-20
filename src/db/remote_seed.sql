@@ -6,6 +6,12 @@ VALUES
   ('usr_member_01', 'Marcus Sterling (Account Exec)', 'marcus@pocketcrm.dev', 1, 'member', 0, unixepoch() * 1000, unixepoch() * 1000),
   ('usr_viewer_01', 'Aria Chen (Auditor)', 'auditor@pocketcrm.dev', 1, 'viewer', 0, unixepoch() * 1000, unixepoch() * 1000);
 
+-- Credential accounts with password 'Admin123!@#'
+INSERT OR IGNORE INTO accounts (id, account_id, provider_id, user_id, password, created_at, updated_at)
+VALUES
+  ('acc_admin_01', 'usr_admin_01', 'credential', 'usr_admin_01', '6e5bdf69dde0e8abfe437fde04e3164f:b9268875d38160e02edff056dcc2b684e5270e4dd8c0194683c1aaf3fb0a4fc44d429e93f315122bffd7536ae26e92c7806a4162656ababf920fc97a0d35c539', unixepoch() * 1000, unixepoch() * 1000),
+  ('acc_member_01', 'usr_member_01', 'credential', 'usr_member_01', '6e5bdf69dde0e8abfe437fde04e3164f:b9268875d38160e02edff056dcc2b684e5270e4dd8c0194683c1aaf3fb0a4fc44d429e93f315122bffd7536ae26e92c7806a4162656ababf920fc97a0d35c539', unixepoch() * 1000, unixepoch() * 1000);
+
 INSERT OR IGNORE INTO document_templates (id, name, is_default, logo_placement, company_header_text, payment_instructions, footer_legal_clause, styles, created_at, updated_at)
 VALUES (
   'tpl_modern_slate',

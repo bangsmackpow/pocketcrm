@@ -1,4 +1,4 @@
-export interface PersonaUser {
+export interface AuthUser {
   id: string;
   name: string;
   email: string;
@@ -79,25 +79,14 @@ export interface TemplateDto {
   };
 }
 
-let activePersonaId = 'usr_admin_01';
-
-export function setActivePersonaId(id: string) {
-  activePersonaId = id;
-}
-
-export function getActivePersonaId() {
-  return activePersonaId;
-}
-
 export async function apiFetch<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
   const headers = new Headers(options.headers || {});
-  if (!headers.has('Content-Type') && options.body) {
+  if (!headers.has('Content-Type') && options.body && typeof options.body === 'string') {
     headers.set('Content-Type', 'application/json');
   }
-  headers.set('x-demo-user-id', activePersonaId);
 
   const res = await fetch(path, {
     ...options,
@@ -114,4 +103,30 @@ export async function apiFetch<T>(
     throw new Error(errMessage);
   }
   return data as T;
+}
+
+export async function signInEmail(email: string, password: string): Promise<void> {
+  await apiFetch('/api/auth/sign-in/email', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function signUpEmail(
+  name: string,
+  email: string,
+  password: string,
+  role = 'admin'
+): Promise<void> {
+  await apiFetch('/api/auth/sign-up/email', {
+    method: 'POST',
+    body: JSON.stringify({ name, email, password, role }),
+  });
+}
+
+export async function signOut(): Promise<void> {
+  await apiFetch('/api/auth/sign-out', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
 }

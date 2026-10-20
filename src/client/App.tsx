@@ -1,8 +1,7 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Building2,
   FileText,
-  FileSpreadsheet,
   LayoutDashboard,
   Palette,
   Plus,
@@ -16,6 +15,11 @@ import {
   DollarSign,
   Receipt,
   Trash2,
+  LogOut,
+  Upload,
+  User,
+  KeyRound,
+  FileSpreadsheet,
 } from 'lucide-react';
 import {
   Button,
@@ -33,17 +37,19 @@ import {
 } from './components/ui';
 import {
   apiFetch,
-  setActivePersonaId,
+  signInEmail,
+  signUpEmail,
+  signOut,
+  type AuthUser,
   type ClientDto,
   type DocumentDto,
-  type PersonaUser,
   type TemplateDto,
 } from './api';
 import {
   calculateDocumentTotals,
   type LineItemCalculationInput,
 } from '../lib/calculations';
-import { SAMPLE_CSV_TEMPLATE, type CsvRowError } from '../lib/csv-parser';
+import Papa from 'papaparse';
 
 interface DashboardData {
   kpis: {
@@ -67,19 +73,28 @@ interface DashboardData {
 }
 
 export function App() {
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [personas, setPersonas] = useState<PersonaUser[]>([]);
-  const [currentUser, setCurrentUser] = useState<PersonaUser | null>(null);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [clients, setClients] = useState<ClientDto[]>([]);
   const [estimates, setEstimates] = useState<DocumentDto[]>([]);
   const [invoices, setInvoices] = useState<DocumentDto[]>([]);
   const [templates, setTemplates] = useState<TemplateDto[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [bannerMsg, setBannerMsg] = useState<{
     type: 'success' | 'error';
     text: string;
   } | null>(null);
+
+  // Auth Form State (Sign In / Sign Up)
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authName, setAuthName] = useState('');
+  const [authRole, setAuthRole] = useState<'admin' | 'member' | 'viewer'>('admin');
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // New Client Modal State
   const [clientModalOpen, setClientModalOpen] = useState(false);
@@ -98,6 +113,12 @@ export function App() {
     postalCode: '',
     country: 'US',
   });
+
+  // Client CSV Import Modal State
+  const [clientImportModalOpen, setClientImportModalOpen] = useState(false);
+  const [clientCsvText, setClientCsvText] = useState('');
+  const [clientImporting, setClientImporting] = useState(false);
+  const [clientImportErrors, setClientImportErrors] = useState<Array<{ rowNumber: number; field: string; message: string }>>([]);
 
   // New Document (Estimate / Invoice) Composer State
   const [docModalOpen, setDocModalOpen] = useState(false);
@@ -127,18 +148,8 @@ export function App() {
     },
   ]);
 
-  // CSV Import State
-  const [csvText, setCsvText] = useState(SAMPLE_CSV_TEMPLATE);
-  const [autoCreateClients, setAutoCreateClients] = useState(true);
-  const [csvResult, setCsvResult] = useState<{
-    dryRun: boolean;
-    totalRows: number;
-    validRowCount: number;
-    importedCount?: number;
-    readyDocumentCount?: number;
-    r2BackupKey?: string | null;
-    errors: CsvRowError[];
-  } | null>(null);
+  const itemCsvInputRef = useRef<HTMLInputElement>(null);
+  const clientCsvInputRef = useRef<HTMLInputElement>(null);
 
   // Template Studio State
   const [editingTemplate, setEditingTemplate] = useState<TemplateDto | null>(null);
@@ -148,11 +159,24 @@ export function App() {
     setTimeout(() => setBannerMsg(null), 5000);
   };
 
-  const refreshAll = useCallback(async () => {
+  const checkAuth = useCallback(async () => {
+    try {
+      const res = await apiFetch<{ user: AuthUser | null }>('/api/auth/me');
+      setCurrentUser(res.user);
+      return res.user;
+    } catch {
+      setCurrentUser(null);
+      return null;
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  const refreshWorkspace = useCallback(async () => {
+    if (!currentUser) return;
     setLoading(true);
     try {
-      const [meRes, dashRes, cliRes, estRes, invRes, tplRes] = await Promise.all([
-        apiFetch<{ user: PersonaUser | null; availablePersonas: PersonaUser[] }>('/api/auth/me'),
+      const [dashRes, cliRes, estRes, invRes, tplRes] = await Promise.all([
         apiFetch<DashboardData>('/api/dashboard'),
         apiFetch<{ clients: ClientDto[] }>('/api/clients'),
         apiFetch<{ estimates: DocumentDto[] }>('/api/estimates'),
@@ -160,8 +184,6 @@ export function App() {
         apiFetch<{ templates: TemplateDto[] }>('/api/templates'),
       ]);
 
-      setCurrentUser(meRes.user);
-      setPersonas(meRes.availablePersonas || []);
       setDashboard(dashRes);
       setClients(cliRes.clients || []);
       setEstimates(estRes.estimates || []);
@@ -178,21 +200,56 @@ export function App() {
     } finally {
       setLoading(false);
     }
-  }, [docClientId, editingTemplate]);
+  }, [currentUser, docClientId, editingTemplate]);
 
   useEffect(() => {
-    void refreshAll();
-  }, [refreshAll]);
+    void checkAuth();
+  }, [checkAuth]);
 
-  const handlePersonaSwitch = async (personaId: string) => {
-    setActivePersonaId(personaId);
-    await refreshAll();
-    const target = personas.find((p) => p.id === personaId);
-    if (target) {
-      notify('success', `Switched RBAC session persona to ${target.name} (${target.role.toUpperCase()})`);
+  useEffect(() => {
+    if (currentUser) {
+      void refreshWorkspace();
+    }
+  }, [currentUser, refreshWorkspace]);
+
+  // Auth Handlers
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthSubmitting(true);
+    setAuthError(null);
+
+    try {
+      if (authMode === 'signin') {
+        await signInEmail(authEmail, authPassword);
+      } else {
+        await signUpEmail(authName, authEmail, authPassword, authRole);
+      }
+      const user = await checkAuth();
+      if (user) {
+        notify('success', `Welcome back, ${user.name}! Authenticated as ${user.role.toUpperCase()}.`);
+      } else {
+        // Fallback check
+        const me = await apiFetch<{ user: AuthUser | null }>('/api/auth/me');
+        setCurrentUser(me.user);
+      }
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Authentication failed');
+    } finally {
+      setAuthSubmitting(false);
     }
   };
 
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      setCurrentUser(null);
+      notify('success', 'Signed out successfully.');
+    } catch (err) {
+      notify('error', err instanceof Error ? err.message : 'Sign out failed');
+    }
+  };
+
+  // Client Creation
   const handleCreateClient = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -218,10 +275,156 @@ export function App() {
       });
       setClientModalOpen(false);
       notify('success', `Client "${newClient.companyName}" created.`);
-      await refreshAll();
+      await refreshWorkspace();
     } catch (err) {
       notify('error', err instanceof Error ? err.message : 'Failed to create client');
     }
+  };
+
+  // Client CSV Import
+  const handleClientCsvUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const text = evt.target?.result as string;
+      setClientCsvText(text);
+      setClientImportErrors([]);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleRunClientCsvImport = async () => {
+    if (!clientCsvText.trim()) {
+      notify('error', 'Please select or paste a client CSV first.');
+      return;
+    }
+    setClientImporting(true);
+    setClientImportErrors([]);
+    try {
+      const res = await apiFetch<{ importedCount: number; errors: Array<{ rowNumber: number; field: string; message: string }> }>(
+        '/api/clients/import-csv',
+        {
+          method: 'POST',
+          body: JSON.stringify({ csvText: clientCsvText }),
+        }
+      );
+      if (res.errors?.length > 0) {
+        setClientImportErrors(res.errors);
+      }
+      notify('success', `Successfully imported ${res.importedCount} clients into D1.`);
+      if (res.errors?.length === 0) {
+        setClientImportModalOpen(false);
+        setClientCsvText('');
+      }
+      await refreshWorkspace();
+    } catch (err) {
+      notify('error', err instanceof Error ? err.message : 'Client CSV import failed');
+    } finally {
+      setClientImporting(false);
+    }
+  };
+
+  // Line Items CSV Import Inside Document Composer
+  const handleItemCsvUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const text = (evt.target?.result as string) || '';
+      const parsed = Papa.parse<Record<string, unknown>>(text.trim(), {
+        header: true,
+        skipEmptyLines: 'greedy',
+        transformHeader: (h) => h.trim().toLowerCase(),
+      });
+
+      const getVal = (row: Record<string, unknown>, ...keys: string[]) => {
+        for (const k of keys) {
+          if (row[k] !== undefined && row[k] !== '') return row[k];
+        }
+        return undefined;
+      };
+
+      const importedItems: LineItemCalculationInput[] = [];
+
+      for (const row of parsed.data) {
+        const name = (getVal(row, 'item name', 'name', 'line item name', 'item') as string) || '';
+        if (!name) continue;
+
+        const description = (getVal(row, 'description', 'desc', 'line item description') as string) || '';
+        const quantity = Math.max(0.01, Number(getVal(row, 'quantity', 'qty')) || 1);
+        const unit = (getVal(row, 'unit') as string) || 'hrs';
+        const unitPrice = Math.max(0, Number(getVal(row, 'unit price', 'unit_price', 'price')) || 0);
+        const taxRate = Math.max(0, Number(getVal(row, 'tax rate', 'tax_rate', 'tax')) || 0);
+        const taxCompound = Boolean(getVal(row, 'compound tax', 'tax_compound', 'compound'));
+        const discountValue = Math.max(0, Number(getVal(row, 'discount value', 'discount_value', 'discount')) || 0);
+
+        importedItems.push({
+          name,
+          description,
+          quantity,
+          unit,
+          unitPrice,
+          discountType: 'percentage',
+          discountValue,
+          taxName: 'Tax',
+          taxRate,
+          taxCompound,
+          secondTaxRate: 0,
+          secondTaxCompound: false,
+        });
+
+        // Optional document header detection if present in first row
+        const docNum = getVal(row, 'document number', 'document_number');
+        if (docNum && typeof docNum === 'string') setDocNumber(docNum);
+        const issue = getVal(row, 'issue date', 'issue_date');
+        if (issue && typeof issue === 'string') setDocIssueDate(issue);
+        const due = getVal(row, 'due date', 'due_date');
+        if (due && typeof due === 'string') setDocDueDate(due);
+        const curr = getVal(row, 'currency');
+        if (curr && typeof curr === 'string') setDocCurrency(curr.toUpperCase());
+      }
+
+      if (importedItems.length > 0) {
+        setDocItems(importedItems);
+        notify('success', `Imported ${importedItems.length} line items from CSV.`);
+      } else {
+        notify('error', 'No valid line item rows detected in CSV.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const downloadItemsTemplate = () => {
+    const csvContent =
+      'Item Name,Description,Quantity,Unit,Unit Price,Tax Rate,Compound Tax\n' +
+      'Cloudflare Workers Edge Engineering,Dedicated D1 + R2 infrastructure,40,hrs,150.00,8.25,false\n' +
+      'Zero-Trust Security Audit,Penetration testing & endpoint hardening,10,hrs,200.00,8.25,false';
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'pocketcrm_items_template.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const downloadClientsTemplate = () => {
+    const csvContent =
+      'Company Name,Client Code,Contact Name,Email,Phone,Tax Identifier,Payment Terms (Days),Currency,Address Line 1,City,State,Postal Code,Country,Notes\n' +
+      'Stark Industries,CLI-STARK,Tony Stark,ap@stark.io,+1 (212) 555-0100,US-EIN-12-3456789,30,USD,10880 Malibu Point,Malibu,CA,90265,US,Enterprise tier partner\n' +
+      'Wayne Enterprises,CLI-WAYNE,Bruce Wayne,finance@wayne.com,+1 (212) 555-0199,US-EIN-98-7654321,15,USD,1007 Mountain Drive,Gotham,NJ,07001,US,Preferred Net 15 terms';
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'pocketcrm_clients_template.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const liveCalculation = calculateDocumentTotals(
@@ -254,7 +457,7 @@ export function App() {
         'success',
         `${docFormType === 'estimate' ? 'Estimate' : 'Invoice'} ${docNumber} created via atomic D1 batch.`
       );
-      await refreshAll();
+      await refreshWorkspace();
     } catch (err) {
       notify('error', err instanceof Error ? err.message : 'Failed to create document');
     }
@@ -267,7 +470,7 @@ export function App() {
         body: JSON.stringify({ status }),
       });
       notify('success', `Estimate transitioned to ${status.toUpperCase()}.`);
-      await refreshAll();
+      await refreshWorkspace();
     } catch (err) {
       notify('error', err instanceof Error ? err.message : 'Transition rejected');
     }
@@ -282,7 +485,7 @@ export function App() {
         'success',
         `Estimate converted to Invoice ${res.invoice.documentNumber}!`
       );
-      await refreshAll();
+      await refreshWorkspace();
       setActiveTab('invoices');
     } catch (err) {
       notify('error', err instanceof Error ? err.message : 'Conversion failed');
@@ -296,7 +499,7 @@ export function App() {
         body: JSON.stringify({ status }),
       });
       notify('success', `Invoice transitioned to ${status.toUpperCase()}.`);
-      await refreshAll();
+      await refreshWorkspace();
     } catch (err) {
       notify('error', err instanceof Error ? err.message : 'Status update failed');
     }
@@ -313,45 +516,9 @@ export function App() {
         }),
       });
       notify('success', `Recorded payment of ${inv.currency} ${partialAmount.toFixed(2)} for ${inv.documentNumber}`);
-      await refreshAll();
+      await refreshWorkspace();
     } catch (err) {
       notify('error', err instanceof Error ? err.message : 'Payment recording failed');
-    }
-  };
-
-  const handleCsvRun = async (dryRun: boolean) => {
-    try {
-      const res = await apiFetch<{
-        dryRun: boolean;
-        totalRows: number;
-        validRowCount: number;
-        importedCount?: number;
-        readyDocumentCount?: number;
-        r2BackupKey?: string | null;
-        errors: CsvRowError[];
-      }>('/api/import/csv', {
-        method: 'POST',
-        body: JSON.stringify({
-          csvText,
-          dryRun,
-          autoCreateMissingClients: autoCreateClients,
-        }),
-      });
-      setCsvResult(res);
-      if (dryRun) {
-        notify(
-          'success',
-          `Dry-run validated ${res.validRowCount}/${res.totalRows} rows (${res.readyDocumentCount} documents ready).`
-        );
-      } else {
-        notify(
-          'success',
-          `Atomically imported ${res.importedCount} documents to D1 & backed up CSV to R2.`
-        );
-        await refreshAll();
-      }
-    } catch (err) {
-      notify('error', err instanceof Error ? err.message : 'CSV import error');
     }
   };
 
@@ -364,15 +531,167 @@ export function App() {
         body: JSON.stringify(editingTemplate),
       });
       notify('success', `Updated template "${editingTemplate.name}" (Admin RBAC verified).`);
-      await refreshAll();
+      await refreshWorkspace();
     } catch (err) {
       notify('error', err instanceof Error ? err.message : 'Failed to update template');
     }
   };
 
+  // 1. Loading State
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="flex items-center gap-3 text-slate-400">
+          <RefreshCw className="w-5 h-5 animate-spin text-blue-500" />
+          <span>Connecting to PocketCRM Secure Edge...</span>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Unauthenticated State: Real Login & Sign Up Screen (No Auto-Login)
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center px-4 py-12">
+        <div className="w-full max-w-md">
+          <div className="text-center mb-8">
+            <div className="inline-flex h-12 w-12 rounded-2xl bg-blue-600 items-center justify-center font-black text-white text-xl shadow-lg shadow-blue-600/30 mb-3">
+              P
+            </div>
+            <h1 className="text-2xl font-bold tracking-tight text-white">
+              PocketCRM Edge
+            </h1>
+            <p className="text-xs text-slate-400 mt-1">
+              Production CRM, Quoting & Invoicing on Cloudflare Workers, D1 & R2
+            </p>
+          </div>
+
+          <Card className="p-6 border-slate-800 bg-slate-900/90 shadow-2xl">
+            <div className="flex rounded-lg bg-slate-950 p-1 mb-6 border border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode('signin');
+                  setAuthError(null);
+                }}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                  authMode === 'signin'
+                    ? 'bg-blue-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode('signup');
+                  setAuthError(null);
+                }}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                  authMode === 'signup'
+                    ? 'bg-blue-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Create Account
+              </button>
+            </div>
+
+            {authError && (
+              <div className="mb-4 flex items-center gap-2 rounded-lg border border-rose-500/40 bg-rose-950/60 p-3 text-xs text-rose-200">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{authError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleAuthSubmit} className="space-y-4">
+              {authMode === 'signup' && (
+                <>
+                  <div>
+                    <Label>Full Name</Label>
+                    <div className="relative">
+                      <Input
+                        type="text"
+                        value={authName}
+                        onChange={(e) => setAuthName(e.target.value)}
+                        placeholder="Elena Vance"
+                        required
+                      />
+                      <User className="w-4 h-4 text-slate-500 absolute right-3 top-2.5" />
+                    </div>
+                  </div>
+                  <div>
+                    <Label>Role</Label>
+                    <select
+                      value={authRole}
+                      onChange={(e) => setAuthRole(e.target.value as 'admin' | 'member' | 'viewer')}
+                      className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                    >
+                      <option value="admin">Admin (Full Access & Template Studio)</option>
+                      <option value="member">Member (Create/Edit Documents & Clients)</option>
+                      <option value="viewer">Viewer (Read-Only & Audit Logs)</option>
+                    </select>
+                  </div>
+                </>
+              )}
+
+              <div>
+                <Label>Email Address</Label>
+                <Input
+                  type="email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  placeholder="admin@pocketcrm.dev"
+                  required
+                />
+              </div>
+
+              <div>
+                <Label>Password</Label>
+                <div className="relative">
+                  <Input
+                    type="password"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    required
+                  />
+                  <KeyRound className="w-4 h-4 text-slate-500 absolute right-3 top-2.5" />
+                </div>
+              </div>
+
+              <Button
+                type="submit"
+                variant="primary"
+                className="w-full"
+                disabled={authSubmitting}
+              >
+                {authSubmitting ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : authMode === 'signin' ? (
+                  'Sign In to PocketCRM'
+                ) : (
+                  'Create Secure Account'
+                )}
+              </Button>
+            </form>
+
+            <div className="mt-6 border-t border-slate-800/80 pt-4 text-center">
+              <p className="text-[11px] text-slate-400">
+                Seeded Admin Credentials: <strong className="text-blue-400">admin@pocketcrm.dev</strong> / <code className="text-slate-300">Admin123!@#</code>
+              </p>
+            </div>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Authenticated State: Full Workspace
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
-      {/* Top Edge Header */}
+      {/* Top Edge Header with Real User Session */}
       <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -389,38 +708,41 @@ export function App() {
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Production CRM, Quoting & Invoicing Engine • Drizzle ORM & Better Auth RBAC
+                Edge CRM, Quoting & Invoicing Engine • Better Auth RBAC
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            {/* RBAC Role Switcher */}
-            <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5">
-              <ShieldCheck className="w-4 h-4 text-blue-400" />
-              <span className="text-xs text-slate-400">RBAC Session:</span>
-              <select
-                aria-label="RBAC Persona Switcher"
-                value={currentUser?.id || 'usr_admin_01'}
-                onChange={(e) => handlePersonaSwitch(e.target.value)}
-                className="bg-transparent text-xs font-semibold text-white focus:outline-none cursor-pointer"
-              >
-                {personas.map((p) => (
-                  <option key={p.id} value={p.id} className="bg-slate-900 text-white">
-                    {p.name} [{p.role.toUpperCase()}]
-                  </option>
-                ))}
-              </select>
+            {/* Authenticated User Pill */}
+            <div className="flex items-center gap-2.5 rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5">
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <div className="text-left text-xs">
+                <span className="font-semibold text-white">{currentUser.name}</span>
+                <span className="ml-1.5 rounded bg-blue-900/60 text-blue-300 text-[10px] px-1.5 py-0.5 font-bold uppercase">
+                  {currentUser.role}
+                </span>
+              </div>
             </div>
 
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => void refreshAll()}
-              title="Refresh D1 State"
+              onClick={() => void refreshWorkspace()}
+              title="Refresh Workspace"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
               Sync
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleSignOut()}
+              title="Sign Out"
+            >
+              <LogOut className="w-3.5 h-3.5 text-slate-400" />
+              Sign Out
             </Button>
           </div>
         </div>
@@ -454,7 +776,7 @@ export function App() {
         </div>
       )}
 
-      {/* Main Content */}
+      {/* Main Workspace Navigation */}
       <main className="mx-auto max-w-7xl w-full flex-1 px-4 sm:px-6 py-6">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
@@ -475,10 +797,6 @@ export function App() {
                 <Receipt className="w-3.5 h-3.5" />
                 Invoices ({invoices.length})
               </TabsTrigger>
-              <TabsTrigger value="import">
-                <FileSpreadsheet className="w-3.5 h-3.5" />
-                CSV Ingestion Engine
-              </TabsTrigger>
               <TabsTrigger value="templates">
                 <Palette className="w-3.5 h-3.5" />
                 Document Templates
@@ -486,421 +804,18 @@ export function App() {
             </TabsList>
 
             <div className="flex items-center gap-2">
-              <Dialog open={clientModalOpen} onOpenChange={setClientModalOpen}>
-                <DialogTrigger asChild>
-                  <Button variant="secondary" size="sm">
-                    <Plus className="w-3.5 h-3.5" />
-                    New Client
-                  </Button>
-                </DialogTrigger>
-                <DialogModal
-                  title="Create CRM Client"
-                  description="Add a client with billing address, tax identifier, and payment terms."
-                >
-                  <form onSubmit={handleCreateClient} className="space-y-4">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <Label>Client Code</Label>
-                        <Input
-                          value={newClient.code}
-                          onChange={(e) =>
-                            setNewClient({ ...newClient, code: e.target.value })
-                          }
-                          required
-                        />
-                      </div>
-                      <div>
-                        <Label>Company Name</Label>
-                        <Input
-                          value={newClient.companyName}
-                          onChange={(e) =>
-                            setNewClient({ ...newClient, companyName: e.target.value })
-                          }
-                          placeholder="Stark Aerospace Inc."
-                          required
-                        />
-                      </div>
-                      <div>
-                        <Label>Primary Contact</Label>
-                        <Input
-                          value={newClient.contactName}
-                          onChange={(e) =>
-                            setNewClient({ ...newClient, contactName: e.target.value })
-                          }
-                          placeholder="Pepper Potts"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <Label>Email</Label>
-                        <Input
-                          type="email"
-                          value={newClient.email}
-                          onChange={(e) =>
-                            setNewClient({ ...newClient, email: e.target.value })
-                          }
-                          placeholder="ap@stark.io"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <Label>Tax Identifier (VAT / EIN)</Label>
-                        <Input
-                          value={newClient.taxIdentifier}
-                          onChange={(e) =>
-                            setNewClient({ ...newClient, taxIdentifier: e.target.value })
-                          }
-                          placeholder="US-EIN-88-1029384"
-                        />
-                      </div>
-                      <div>
-                        <Label>Payment Terms (Days)</Label>
-                        <Input
-                          type="number"
-                          value={newClient.paymentTermsDays}
-                          onChange={(e) =>
-                            setNewClient({
-                              ...newClient,
-                              paymentTermsDays: Number(e.target.value),
-                            })
-                          }
-                        />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-800">
-                      <div className="col-span-2">
-                        <Label>Billing Street Address</Label>
-                        <Input
-                          value={newClient.line1}
-                          onChange={(e) =>
-                            setNewClient({ ...newClient, line1: e.target.value })
-                          }
-                          placeholder="200 Park Avenue"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <Label>City</Label>
-                        <Input
-                          value={newClient.city}
-                          onChange={(e) =>
-                            setNewClient({ ...newClient, city: e.target.value })
-                          }
-                          placeholder="New York"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <Label>State / Postal Code</Label>
-                        <div className="flex gap-2">
-                          <Input
-                            value={newClient.state}
-                            onChange={(e) =>
-                              setNewClient({ ...newClient, state: e.target.value })
-                            }
-                            placeholder="NY"
-                          />
-                          <Input
-                            value={newClient.postalCode}
-                            onChange={(e) =>
-                              setNewClient({ ...newClient, postalCode: e.target.value })
-                            }
-                            placeholder="10166"
-                            required
-                          />
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex justify-end gap-2 pt-3">
-                      <Button type="submit" variant="primary">
-                        Save Client to D1
-                      </Button>
-                    </div>
-                  </form>
-                </DialogModal>
-              </Dialog>
-
-              <Dialog open={docModalOpen} onOpenChange={setDocModalOpen}>
-                <DialogTrigger asChild>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={() => {
-                      const nextPrefix = docFormType === 'estimate' ? 'EST' : 'INV';
-                      setDocNumber(
-                        `${nextPrefix}-2026-${Math.floor(1000 + Math.random() * 9000)}`
-                      );
-                    }}
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    New Quote / Invoice
-                  </Button>
-                </DialogTrigger>
-                <DialogModal
-                  title="Create Quote or Invoice"
-                  description="Atomic D1 batch parent-child insert with compound/simple tax & discount calculation."
-                  className="max-w-4xl"
-                >
-                  <form onSubmit={handleCreateDocument} className="space-y-4">
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      <div>
-                        <Label>Document Type</Label>
-                        <select
-                          value={docFormType}
-                          onChange={(e) => {
-                            const t = e.target.value as 'estimate' | 'invoice';
-                            setDocFormType(t);
-                            setDocNumber(
-                              `${t === 'estimate' ? 'EST' : 'INV'}-2026-${Math.floor(
-                                1000 + Math.random() * 9000
-                              )}`
-                            );
-                          }}
-                          className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
-                        >
-                          <option value="invoice">Invoice</option>
-                          <option value="estimate">Estimate / Quote</option>
-                        </select>
-                      </div>
-                      <div>
-                        <Label>Document Number</Label>
-                        <Input
-                          value={docNumber}
-                          onChange={(e) => setDocNumber(e.target.value)}
-                          required
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <Label>Client</Label>
-                        <select
-                          value={docClientId}
-                          onChange={(e) => setDocClientId(e.target.value)}
-                          className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
-                          required
-                        >
-                          {clients.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.companyName} ({c.code})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <Label>Issue Date</Label>
-                        <Input
-                          type="date"
-                          value={docIssueDate}
-                          onChange={(e) => setDocIssueDate(e.target.value)}
-                          required
-                        />
-                      </div>
-                      <div>
-                        <Label>Due Date</Label>
-                        <Input
-                          type="date"
-                          value={docDueDate}
-                          onChange={(e) => setDocDueDate(e.target.value)}
-                          required
-                        />
-                      </div>
-                      <div>
-                        <Label>Doc Discount Type</Label>
-                        <select
-                          value={docDiscountType}
-                          onChange={(e) =>
-                            setDocDiscountType(e.target.value as 'percentage' | 'fixed')
-                          }
-                          className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
-                        >
-                          <option value="percentage">Percentage (%)</option>
-                          <option value="fixed">Fixed Amount ($)</option>
-                        </select>
-                      </div>
-                      <div>
-                        <Label>Doc Discount Value</Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          value={docDiscountValue}
-                          onChange={(e) => setDocDiscountValue(Number(e.target.value))}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Line Items Engine */}
-                    <div className="border-t border-slate-800 pt-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <Label className="mb-0">
-                          Line Items (Supports Simple & Compound Taxes)
-                        </Label>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            setDocItems([
-                              ...docItems,
-                              {
-                                name: 'Additional Engineering Service',
-                                description: '',
-                                quantity: 1,
-                                unit: 'hrs',
-                                unitPrice: 150,
-                                discountType: 'percentage',
-                                discountValue: 0,
-                                taxName: 'Tax',
-                                taxRate: 8.25,
-                                taxCompound: false,
-                                secondTaxRate: 0,
-                                secondTaxCompound: false,
-                              },
-                            ])
-                          }
-                        >
-                          <Plus className="w-3.5 h-3.5" /> Add Line Item
-                        </Button>
-                      </div>
-
-                      <div className="space-y-2.5">
-                        {docItems.map((item, idx) => (
-                          <div
-                            key={idx}
-                            className="grid grid-cols-12 gap-2 items-center rounded-xl border border-slate-800/90 bg-slate-950/70 p-2.5"
-                          >
-                            <div className="col-span-4">
-                              <Input
-                                value={item.name}
-                                onChange={(e) => {
-                                  const next = [...docItems];
-                                  next[idx] = { ...item, name: e.target.value };
-                                  setDocItems(next);
-                                }}
-                                placeholder="Item name"
-                                required
-                              />
-                            </div>
-                            <div className="col-span-2">
-                              <Input
-                                type="number"
-                                step="0.01"
-                                value={item.quantity}
-                                onChange={(e) => {
-                                  const next = [...docItems];
-                                  next[idx] = {
-                                    ...item,
-                                    quantity: Number(e.target.value),
-                                  };
-                                  setDocItems(next);
-                                }}
-                                placeholder="Qty"
-                              />
-                            </div>
-                            <div className="col-span-2">
-                              <Input
-                                type="number"
-                                step="0.01"
-                                value={item.unitPrice}
-                                onChange={(e) => {
-                                  const next = [...docItems];
-                                  next[idx] = {
-                                    ...item,
-                                    unitPrice: Number(e.target.value),
-                                  };
-                                  setDocItems(next);
-                                }}
-                                placeholder="Unit Price"
-                              />
-                            </div>
-                            <div className="col-span-2">
-                              <Input
-                                type="number"
-                                step="0.01"
-                                value={item.taxRate}
-                                onChange={(e) => {
-                                  const next = [...docItems];
-                                  next[idx] = {
-                                    ...item,
-                                    taxRate: Number(e.target.value),
-                                  };
-                                  setDocItems(next);
-                                }}
-                                placeholder="Tax %"
-                              />
-                            </div>
-                            <div className="col-span-2 flex items-center justify-end gap-2">
-                              <label className="flex items-center gap-1 text-[11px] text-slate-400 cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={Boolean(item.secondTaxCompound)}
-                                  onChange={(e) => {
-                                    const next = [...docItems];
-                                    next[idx] = {
-                                      ...item,
-                                      secondTaxRate: e.target.checked ? 5 : 0,
-                                      secondTaxCompound: e.target.checked,
-                                    };
-                                    setDocItems(next);
-                                  }}
-                                />
-                                +5% Comp.
-                              </label>
-                              {docItems.length > 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setDocItems(docItems.filter((_, i) => i !== idx))
-                                  }
-                                  className="text-rose-400 hover:text-rose-300 p-1"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Live Calculated Summary */}
-                    <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl bg-slate-950 p-4 border border-slate-800">
-                      <div className="space-y-1 text-xs text-slate-400">
-                        <div>
-                          Subtotal:{' '}
-                          <strong className="text-slate-200">
-                            ${liveCalculation.subtotal.toFixed(2)}
-                          </strong>
-                        </div>
-                        <div>
-                          Discount Total:{' '}
-                          <strong className="text-amber-400">
-                            -${liveCalculation.discountTotal.toFixed(2)}
-                          </strong>
-                        </div>
-                        <div>
-                          Tax Total:{' '}
-                          <strong className="text-sky-400">
-                            +${liveCalculation.taxTotal.toFixed(2)}
-                          </strong>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-xs uppercase tracking-wider text-slate-400">
-                          Calculated Grand Total
-                        </div>
-                        <div className="text-2xl font-black text-white">
-                          {docCurrency} ${liveCalculation.total.toFixed(2)}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-end gap-2">
-                      <Button type="submit" variant="primary">
-                        Commit Atomic Batch to D1
-                      </Button>
-                    </div>
-                  </form>
-                </DialogModal>
-              </Dialog>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => {
+                  const nextPrefix = docFormType === 'estimate' ? 'EST' : 'INV';
+                  setDocNumber(`${nextPrefix}-2026-${Math.floor(1000 + Math.random() * 9000)}`);
+                  setDocModalOpen(true);
+                }}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                New Quote / Invoice
+              </Button>
             </div>
           </div>
 
@@ -951,7 +866,7 @@ export function App() {
                   {dashboard?.kpis.activeClients ?? 0}
                 </div>
                 <div className="mt-1 text-xs text-slate-400">
-                  Role: <strong className="text-blue-400 uppercase">{currentUser?.role ?? 'viewer'}</strong>
+                  Role: <strong className="text-blue-400 uppercase">{currentUser.role}</strong>
                 </div>
               </Card>
             </div>
@@ -1028,7 +943,7 @@ export function App() {
           {/* 2. CLIENTS TAB */}
           <TabsContent value="clients">
             <Card className="p-5">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
                 <div>
                   <h2 className="text-base font-bold text-white">
                     CRM Client Directory
@@ -1037,7 +952,167 @@ export function App() {
                     Manage customer contacts, billing addresses, tax IDs, and payment terms.
                   </p>
                 </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={downloadClientsTemplate}
+                    title="Download Customers CSV Template"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Download CSV Template
+                  </Button>
+
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setClientImportErrors([]);
+                      setClientCsvText('');
+                      setClientImportModalOpen(true);
+                    }}
+                  >
+                    <Upload className="w-3.5 h-3.5 text-blue-400" />
+                    Import Clients CSV
+                  </Button>
+
+                  <Dialog open={clientModalOpen} onOpenChange={setClientModalOpen}>
+                    <DialogTrigger asChild>
+                      <Button variant="primary" size="sm">
+                        <Plus className="w-3.5 h-3.5" />
+                        New Client
+                      </Button>
+                    </DialogTrigger>
+                    <DialogModal
+                      title="Create CRM Client"
+                      description="Add a client with billing address, tax identifier, and payment terms."
+                    >
+                      <form onSubmit={handleCreateClient} className="space-y-4">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <Label>Client Code</Label>
+                            <Input
+                              value={newClient.code}
+                              onChange={(e) =>
+                                setNewClient({ ...newClient, code: e.target.value })
+                              }
+                              required
+                            />
+                          </div>
+                          <div>
+                            <Label>Company Name</Label>
+                            <Input
+                              value={newClient.companyName}
+                              onChange={(e) =>
+                                setNewClient({ ...newClient, companyName: e.target.value })
+                              }
+                              placeholder="Stark Aerospace Inc."
+                              required
+                            />
+                          </div>
+                          <div>
+                            <Label>Primary Contact</Label>
+                            <Input
+                              value={newClient.contactName}
+                              onChange={(e) =>
+                                setNewClient({ ...newClient, contactName: e.target.value })
+                              }
+                              placeholder="Pepper Potts"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <Label>Email</Label>
+                            <Input
+                              type="email"
+                              value={newClient.email}
+                              onChange={(e) =>
+                                setNewClient({ ...newClient, email: e.target.value })
+                              }
+                              placeholder="ap@stark.io"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <Label>Tax Identifier (VAT / EIN)</Label>
+                            <Input
+                              value={newClient.taxIdentifier}
+                              onChange={(e) =>
+                                setNewClient({ ...newClient, taxIdentifier: e.target.value })
+                              }
+                              placeholder="US-EIN-88-1029384"
+                            />
+                          </div>
+                          <div>
+                            <Label>Payment Terms (Days)</Label>
+                            <Input
+                              type="number"
+                              value={newClient.paymentTermsDays}
+                              onChange={(e) =>
+                                setNewClient({
+                                  ...newClient,
+                                  paymentTermsDays: Number(e.target.value),
+                                })
+                              }
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-800">
+                          <div className="col-span-2">
+                            <Label>Billing Street Address</Label>
+                            <Input
+                              value={newClient.line1}
+                              onChange={(e) =>
+                                setNewClient({ ...newClient, line1: e.target.value })
+                              }
+                              placeholder="200 Park Avenue"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <Label>City</Label>
+                            <Input
+                              value={newClient.city}
+                              onChange={(e) =>
+                                setNewClient({ ...newClient, city: e.target.value })
+                              }
+                              placeholder="New York"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <Label>State / Postal Code</Label>
+                            <div className="flex gap-2">
+                              <Input
+                                value={newClient.state}
+                                onChange={(e) =>
+                                  setNewClient({ ...newClient, state: e.target.value })
+                                }
+                                placeholder="NY"
+                              />
+                              <Input
+                                value={newClient.postalCode}
+                                onChange={(e) =>
+                                  setNewClient({ ...newClient, postalCode: e.target.value })
+                                }
+                                placeholder="10166"
+                                required
+                              />
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex justify-end gap-2 pt-3">
+                          <Button type="submit" variant="primary">
+                            Save Client to D1
+                          </Button>
+                        </div>
+                      </form>
+                    </DialogModal>
+                  </Dialog>
+                </div>
               </div>
+
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
@@ -1079,6 +1154,81 @@ export function App() {
                 </table>
               </div>
             </Card>
+
+            {/* Clients CSV Import Modal */}
+            <Dialog open={clientImportModalOpen} onOpenChange={setClientImportModalOpen}>
+              <DialogModal
+                title="Bulk Import Clients from CSV"
+                description="Upload a CSV with company names, codes, contacts, emails, and billing addresses."
+              >
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <input
+                      type="file"
+                      ref={clientCsvInputRef}
+                      onChange={handleClientCsvUpload}
+                      accept=".csv,text/csv"
+                      className="hidden"
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => clientCsvInputRef.current?.click()}
+                    >
+                      <Upload className="w-3.5 h-3.5" /> Select .CSV File
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={downloadClientsTemplate}
+                    >
+                      <Download className="w-3.5 h-3.5" /> Download Template
+                    </Button>
+                  </div>
+
+                  <div>
+                    <Label>CSV Content</Label>
+                    <textarea
+                      rows={6}
+                      value={clientCsvText}
+                      onChange={(e) => setClientCsvText(e.target.value)}
+                      placeholder="Paste CSV rows here or choose a file above..."
+                      className="w-full rounded-xl border border-slate-800 bg-slate-950 p-3 font-mono text-xs text-slate-200 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+
+                  {clientImportErrors.length > 0 && (
+                    <div className="rounded-xl border border-rose-500/40 bg-rose-950/30 p-3">
+                      <h4 className="text-xs font-bold uppercase text-rose-300 mb-1">
+                        Validation Errors ({clientImportErrors.length})
+                      </h4>
+                      <div className="space-y-1 text-xs text-rose-200 font-mono max-h-36 overflow-y-auto">
+                        {clientImportErrors.map((err, i) => (
+                          <div key={i}>
+                            [Row {err.rowNumber}] Field &quot;{err.field}&quot;: {err.message}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <Button
+                      variant="primary"
+                      onClick={handleRunClientCsvImport}
+                      disabled={clientImporting || !clientCsvText.trim()}
+                    >
+                      {clientImporting ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <FileSpreadsheet className="w-3.5 h-3.5" />
+                      )}
+                      Import Clients to D1
+                    </Button>
+                  </div>
+                </div>
+              </DialogModal>
+            </Dialog>
           </TabsContent>
 
           {/* 3. ESTIMATES / QUOTES TAB */}
@@ -1329,114 +1479,7 @@ export function App() {
             </Card>
           </TabsContent>
 
-          {/* 5. CSV INGESTION ENGINE TAB */}
-          <TabsContent value="import" className="space-y-6">
-            <Card className="p-6">
-              <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
-                <div>
-                  <h2 className="text-base font-bold text-white">
-                    Templated CSV Ingestion Engine (PapaParse + Zod + Atomic D1 Batch)
-                  </h2>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Required Columns: Document Number, Client Identifier, Issue Date, Due Date, Status, Currency, Line Item Name, Line Item Description, Quantity, Unit Price, Tax Rate
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <a
-                    href="/api/import/template"
-                    download="pocketcrm_documents_template.csv"
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    Download CSV Schema Template
-                  </a>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <Label>CSV Payload (Paste or Edit Below)</Label>
-                  <textarea
-                    rows={8}
-                    value={csvText}
-                    onChange={(e) => setCsvText(e.target.value)}
-                    className="w-full rounded-xl border border-slate-800 bg-slate-950 p-3 font-mono text-xs text-slate-200 focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={autoCreateClients}
-                      onChange={(e) => setAutoCreateClients(e.target.checked)}
-                    />
-                    Auto-create missing Client Identifiers during import
-                  </label>
-
-                  <div className="flex items-center gap-2.5">
-                    <Button
-                      variant="secondary"
-                      onClick={() => void handleCsvRun(true)}
-                    >
-                      Validate Dry-Run (PapaParse + Zod)
-                    </Button>
-                    <Button
-                      variant="primary"
-                      onClick={() => void handleCsvRun(false)}
-                    >
-                      Execute Atomic D1 Batch Import + R2 Backup
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              {csvResult && (
-                <div className="mt-6 border-t border-slate-800 pt-4 space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl bg-slate-950 p-4 border border-slate-800">
-                    <div className="flex items-center gap-6 text-xs">
-                      <div>
-                        Mode:{' '}
-                        <strong className="text-blue-400 uppercase">
-                          {csvResult.dryRun ? 'Dry-Run Validation' : 'Committed to D1'}
-                        </strong>
-                      </div>
-                      <div>
-                        Valid Rows:{' '}
-                        <strong className="text-emerald-400">
-                          {csvResult.validRowCount} / {csvResult.totalRows}
-                        </strong>
-                      </div>
-                      {csvResult.r2BackupKey && (
-                        <div>
-                          R2 CSV Backup Key:{' '}
-                          <code className="text-sky-400">{csvResult.r2BackupKey}</code>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {csvResult.errors.length > 0 && (
-                    <div className="rounded-xl border border-rose-500/40 bg-rose-950/30 p-4">
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-rose-300 mb-2">
-                        Row-Level Validation Errors ({csvResult.errors.length})
-                      </h3>
-                      <div className="space-y-1.5 text-xs text-rose-200 font-mono">
-                        {csvResult.errors.map((err, i) => (
-                          <div key={i}>
-                            [Row {err.rowNumber}] {err.documentNumber ? `(${err.documentNumber}) ` : ''}
-                            Field &quot;{err.field}&quot;: {err.message}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </Card>
-          </TabsContent>
-
-          {/* 6. CONFIGURABLE DOCUMENT TEMPLATES TAB */}
+          {/* 5. CONFIGURABLE DOCUMENT TEMPLATES TAB */}
           <TabsContent value="templates">
             {editingTemplate && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1654,6 +1697,306 @@ export function App() {
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* New Invoice / New Quote Modal with Embedded Line Items CSV Import & Template Download */}
+      <Dialog open={docModalOpen} onOpenChange={setDocModalOpen}>
+        <DialogModal
+          title={docFormType === 'estimate' ? 'Create Estimate / Quote' : 'Create Invoice'}
+          description="Atomic D1 batch parent-child insert with live line-items calculation, CSV import, and template download."
+          className="max-w-4xl"
+        >
+          <form onSubmit={handleCreateDocument} className="space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div>
+                <Label>Document Type</Label>
+                <select
+                  value={docFormType}
+                  onChange={(e) => {
+                    const t = e.target.value as 'estimate' | 'invoice';
+                    setDocFormType(t);
+                    setDocNumber(
+                      `${t === 'estimate' ? 'EST' : 'INV'}-2026-${Math.floor(
+                        1000 + Math.random() * 9000
+                      )}`
+                    );
+                  }}
+                  className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                >
+                  <option value="invoice">Invoice</option>
+                  <option value="estimate">Estimate / Quote</option>
+                </select>
+              </div>
+              <div>
+                <Label>Document Number</Label>
+                <Input
+                  value={docNumber}
+                  onChange={(e) => setDocNumber(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="col-span-2">
+                <Label>Client</Label>
+                <select
+                  value={docClientId}
+                  onChange={(e) => setDocClientId(e.target.value)}
+                  className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                  required
+                >
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.companyName} ({c.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <Label>Issue Date</Label>
+                <Input
+                  type="date"
+                  value={docIssueDate}
+                  onChange={(e) => setDocIssueDate(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <Label>Due Date</Label>
+                <Input
+                  type="date"
+                  value={docDueDate}
+                  onChange={(e) => setDocDueDate(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <Label>Doc Discount Type</Label>
+                <select
+                  value={docDiscountType}
+                  onChange={(e) =>
+                    setDocDiscountType(e.target.value as 'percentage' | 'fixed')
+                  }
+                  className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                >
+                  <option value="percentage">Percentage (%)</option>
+                  <option value="fixed">Fixed Amount ($)</option>
+                </select>
+              </div>
+              <div>
+                <Label>Doc Discount Value</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={docDiscountValue}
+                  onChange={(e) => setDocDiscountValue(Number(e.target.value))}
+                />
+              </div>
+            </div>
+
+            {/* Line Items Engine with Embedded CSV Import & Template Download */}
+            <div className="border-t border-slate-800 pt-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <Label className="mb-0">
+                  Line Items (Supports Unit Prices, Discounts & Taxes)
+                </Label>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="file"
+                    ref={itemCsvInputRef}
+                    onChange={handleItemCsvUpload}
+                    accept=".csv,text/csv"
+                    className="hidden"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={downloadItemsTemplate}
+                    title="Download deterministic Line Items CSV template"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    CSV Template
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => itemCsvInputRef.current?.click()}
+                    title="Import line items from CSV"
+                  >
+                    <Upload className="w-3.5 h-3.5 text-blue-400" />
+                    Import CSV
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setDocItems([
+                        ...docItems,
+                        {
+                          name: 'Additional Engineering Service',
+                          description: '',
+                          quantity: 1,
+                          unit: 'hrs',
+                          unitPrice: 150,
+                          discountType: 'percentage',
+                          discountValue: 0,
+                          taxName: 'Tax',
+                          taxRate: 8.25,
+                          taxCompound: false,
+                          secondTaxRate: 0,
+                          secondTaxCompound: false,
+                        },
+                      ])
+                    }
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Add Row
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                {docItems.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="grid grid-cols-12 gap-2 items-center rounded-xl border border-slate-800/90 bg-slate-950/70 p-2.5"
+                  >
+                    <div className="col-span-4">
+                      <Input
+                        value={item.name}
+                        onChange={(e) => {
+                          const next = [...docItems];
+                          next[idx] = { ...item, name: e.target.value };
+                          setDocItems(next);
+                        }}
+                        placeholder="Item name"
+                        required
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={item.quantity}
+                        onChange={(e) => {
+                          const next = [...docItems];
+                          next[idx] = {
+                            ...item,
+                            quantity: Number(e.target.value),
+                          };
+                          setDocItems(next);
+                        }}
+                        placeholder="Qty"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={item.unitPrice}
+                        onChange={(e) => {
+                          const next = [...docItems];
+                          next[idx] = {
+                            ...item,
+                            unitPrice: Number(e.target.value),
+                          };
+                          setDocItems(next);
+                        }}
+                        placeholder="Unit Price"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={item.taxRate}
+                        onChange={(e) => {
+                          const next = [...docItems];
+                          next[idx] = {
+                            ...item,
+                            taxRate: Number(e.target.value),
+                          };
+                          setDocItems(next);
+                        }}
+                        placeholder="Tax %"
+                      />
+                    </div>
+                    <div className="col-span-2 flex items-center justify-end gap-2">
+                      <label className="flex items-center gap-1 text-[11px] text-slate-400 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(item.secondTaxCompound)}
+                          onChange={(e) => {
+                            const next = [...docItems];
+                            next[idx] = {
+                              ...item,
+                              secondTaxRate: e.target.checked ? 5 : 0,
+                              secondTaxCompound: e.target.checked,
+                            };
+                            setDocItems(next);
+                          }}
+                        />
+                        +5% C.
+                      </label>
+                      {docItems.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDocItems(docItems.filter((_, i) => i !== idx))
+                          }
+                          className="text-rose-400 hover:text-rose-300 p-1"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Live Calculated Summary */}
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl bg-slate-950 p-4 border border-slate-800">
+              <div className="space-y-1 text-xs text-slate-400">
+                <div>
+                  Subtotal:{' '}
+                  <strong className="text-slate-200">
+                    ${liveCalculation.subtotal.toFixed(2)}
+                  </strong>
+                </div>
+                <div>
+                  Discount Total:{' '}
+                  <strong className="text-amber-400">
+                    -${liveCalculation.discountTotal.toFixed(2)}
+                  </strong>
+                </div>
+                <div>
+                  Tax Total:{' '}
+                  <strong className="text-sky-400">
+                    +${liveCalculation.taxTotal.toFixed(2)}
+                  </strong>
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-xs uppercase tracking-wider text-slate-400">
+                  Calculated Grand Total
+                </div>
+                <div className="text-2xl font-black text-white">
+                  {docCurrency} ${liveCalculation.total.toFixed(2)}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button type="submit" variant="primary">
+                Commit Atomic Batch to D1
+              </Button>
+            </div>
+          </form>
+        </DialogModal>
+      </Dialog>
     </div>
   );
 }

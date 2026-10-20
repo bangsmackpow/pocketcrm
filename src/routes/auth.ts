@@ -13,26 +13,12 @@ import { recordAuditLog } from '../lib/audit';
 export const authRoutes = new Hono<AppEnv>();
 
 /**
- * Current user & available RBAC personas endpoint
+ * Current authenticated user session endpoint
  */
 authRoutes.get('/me', async (c) => {
-  const db = c.get('db');
   const currentUser = c.get('user');
-  const allUsers = await db
-    .select({
-      id: users.id,
-      name: users.name,
-      email: users.email,
-      role: users.role,
-      banned: users.banned,
-      createdAt: users.createdAt,
-    })
-    .from(users)
-    .orderBy(desc(users.createdAt));
-
   return c.json({
     user: currentUser,
-    availablePersonas: allUsers,
   });
 });
 
@@ -82,7 +68,7 @@ authRoutes.patch(
 );
 
 /**
- * Audit Logs viewer (accessible to all authenticated roles, including Viewer/Auditor)
+ * Audit Logs viewer (accessible to authenticated users with minimum viewer role)
  */
 authRoutes.get('/audit-logs', requireRole('viewer'), async (c) => {
   const db = c.get('db');
@@ -96,7 +82,11 @@ authRoutes.get('/audit-logs', requireRole('viewer'), async (c) => {
 });
 
 /**
- * Delegate standard Better Auth endpoints (/api/auth/sign-in/*, /api/auth/sign-up/*, /api/auth/get-session, etc.)
+ * Delegate standard Better Auth endpoints:
+ * - POST /api/auth/sign-in/email
+ * - POST /api/auth/sign-up/email
+ * - POST /api/auth/sign-out
+ * - GET  /api/auth/get-session
  */
 authRoutes.on(['GET', 'POST'], '/*', async (c) => {
   const auth = createAuth(c.env);

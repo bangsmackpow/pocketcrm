@@ -8,6 +8,7 @@ import {
   documents,
   documentItems,
   auditLogs,
+  accounts,
 } from './schema';
 
 async function seed() {
@@ -72,6 +73,23 @@ async function seed() {
   for (const u of seedUsers) {
     db.insert(users).values(u).onConflictDoNothing().run();
   }
+
+  // Seed Credential Account for Admin (Password: Admin123!@#)
+  db.insert(accounts)
+    .values([
+      {
+        id: 'acc_admin_01',
+        accountId: 'usr_admin_01',
+        providerId: 'credential',
+        userId: 'usr_admin_01',
+        password:
+          '6e5bdf69dde0e8abfe437fde04e3164f:b9268875d38160e02edff056dcc2b684e5270e4dd8c0194683c1aaf3fb0a4fc44d429e93f315122bffd7536ae26e92c7806a4162656ababf920fc97a0d35c539',
+        createdAt: now,
+        updatedAt: now,
+      },
+    ])
+    .onConflictDoNothing()
+    .run();
 
   // 2. Seed Default Document Template
   const defaultTemplateId = 'tpl_modern_slate';
