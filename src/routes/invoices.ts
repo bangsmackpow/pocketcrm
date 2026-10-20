@@ -232,6 +232,145 @@ invoiceRoutes.post(
 );
 
 /**
+ * Modify an existing Invoice (allowed for any invoice until it has been paid)
+ */
+const updateInvoiceSchema = z.object({
+  clientId: z.string().trim().min(1).optional(),
+  templateId: z.string().optional(),
+  issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  currency: z.string().length(3).toUpperCase().optional(),
+  discountType: z.enum(['percentage', 'fixed']).optional(),
+  discountValue: z.coerce.number().min(0).optional(),
+  notes: z.string().optional().nullable(),
+  terms: z.string().optional().nullable(),
+  items: z.array(lineItemSchema).min(1, 'At least one line item is required'),
+});
+
+invoiceRoutes.put(
+  '/:id',
+  requireRole('member'),
+  zValidator('json', updateInvoiceSchema),
+  async (c) => {
+    const db = c.get('db');
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const body = c.req.valid('json');
+    const now = new Date();
+
+    const [existing] = await db
+      .select()
+      .from(documents)
+      .where(and(eq(documents.id, id), eq(documents.type, 'invoice')))
+      .limit(1);
+
+    if (!existing) {
+      return c.json({ error: 'Invoice not found' }, 404);
+    }
+
+    if (existing.status === 'paid') {
+      return c.json(
+        {
+          error: 'InvoiceLocked',
+          message: 'Paid invoices cannot be modified. To adjust billing, issue a credit or create a revised invoice.',
+        },
+        400
+      );
+    }
+
+    const discountType = body.discountType ?? existing.discountType;
+    const discountValue = body.discountValue ?? existing.discountValue;
+    const amountPaid = existing.amountPaid ?? 0;
+
+    const calc = calculateDocumentTotals(
+      body.items,
+      discountType,
+      discountValue,
+      amountPaid
+    );
+
+    // Re-evaluate status based on updated amounts
+    let newStatus: InvoiceStatus = existing.status as InvoiceStatus;
+    if (amountPaid > 0 && calc.amountDue === 0) {
+      newStatus = 'paid';
+    } else if (amountPaid > 0 && calc.amountDue > 0) {
+      newStatus = 'partial';
+    }
+
+    const deleteItems = db
+      .delete(documentItems)
+      .where(eq(documentItems.documentId, id));
+
+    const updateHeader = db
+      .update(documents)
+      .set({
+        clientId: body.clientId ?? existing.clientId,
+        templateId: body.templateId ?? existing.templateId,
+        issueDate: body.issueDate ?? existing.issueDate,
+        dueDate: body.dueDate ?? existing.dueDate,
+        currency: body.currency ?? existing.currency,
+        discountType,
+        discountValue,
+        subtotal: calc.subtotal,
+        discountTotal: calc.discountTotal,
+        taxTotal: calc.taxTotal,
+        total: calc.total,
+        amountDue: calc.amountDue,
+        status: newStatus,
+        notes: body.notes !== undefined ? body.notes : existing.notes,
+        terms: body.terms !== undefined ? body.terms : existing.terms,
+        updatedAt: now,
+      })
+      .where(eq(documents.id, id));
+
+    const itemInserts = calc.items.map((item, idx) =>
+      db.insert(documentItems).values({
+        id: `item_${crypto.randomUUID().slice(0, 12)}`,
+        documentId: id,
+        sortOrder: idx,
+        name: item.name,
+        description: item.description ?? '',
+        quantity: item.quantity,
+        unit: item.unit ?? 'hrs',
+        unitPrice: item.unitPrice,
+        discountType: item.discountType ?? 'percentage',
+        discountValue: item.discountValue ?? 0,
+        taxName: item.taxName ?? 'Tax',
+        taxRate: item.taxRate ?? 0,
+        taxCompound: Boolean(item.taxCompound),
+        secondTaxName: item.secondTaxName ?? null,
+        secondTaxRate: item.secondTaxRate ?? 0,
+        secondTaxCompound: Boolean(item.secondTaxCompound),
+        lineSubtotal: item.lineSubtotal,
+        lineDiscountAmount: item.lineDiscountAmount,
+        lineTaxAmount: item.lineTaxAmount,
+        lineTotal: item.lineTotal,
+        createdAt: now,
+      })
+    );
+
+    await db.batch([deleteItems, updateHeader, ...itemInserts]);
+
+    await recordAuditLog({
+      db,
+      user,
+      action: 'invoice.updated',
+      entityType: 'invoice',
+      entityId: id,
+      metadata: {
+        documentNumber: existing.documentNumber,
+        previousTotal: existing.total,
+        newTotal: calc.total,
+        status: newStatus,
+      },
+    });
+
+    const [updated] = await db.select().from(documents).where(eq(documents.id, id)).limit(1);
+    return c.json({ invoice: updated, calculation: calc });
+  }
+);
+
+/**
  * State Machine Transition for Invoice:
  * Draft -> Sent -> Partial/Paid -> Overdue -> Cancelled
  */

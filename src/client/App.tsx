@@ -196,6 +196,7 @@ export function App() {
 
   // New Document (Estimate / Invoice) Composer State
   const [docModalOpen, setDocModalOpen] = useState(false);
+  const [editingDocId, setEditingDocId] = useState<string | null>(null);
   const [docFormType, setDocFormType] = useState<'estimate' | 'invoice'>('invoice');
   const [docNumber, setDocNumber] = useState('INV-2026-0042');
   const [docClientId, setDocClientId] = useState('');
@@ -654,9 +655,148 @@ export function App() {
     0
   );
 
+  const openCreateDocumentModal = (type: 'invoice' | 'estimate' = 'invoice') => {
+    setEditingDocId(null);
+    setDocFormType(type);
+    const nextPrefix = type === 'estimate' ? 'EST' : 'INV';
+    setDocNumber(`${nextPrefix}-2026-${Math.floor(1000 + Math.random() * 9000)}`);
+    setDocClientId(clients[0]?.id || '');
+    setDocIssueDate(new Date().toISOString().slice(0, 10));
+    const due = new Date();
+    due.setDate(due.getDate() + 30);
+    setDocDueDate(due.toISOString().slice(0, 10));
+    setDocCurrency('USD');
+    setDocDiscountType('percentage');
+    setDocDiscountValue(0);
+    setDocNotes('');
+    setDocItems([
+      {
+        name: 'Professional Services',
+        description: 'Specialized enterprise consulting',
+        quantity: 10,
+        unit: 'hrs',
+        unitPrice: 150,
+        discountType: 'percentage',
+        discountValue: 0,
+        taxName: 'Tax',
+        taxRate: 8.25,
+        taxCompound: false,
+      },
+    ]);
+    setDocModalOpen(true);
+  };
+
+  const openEditInvoiceModal = async (inv: DocumentDto) => {
+    if (inv.status === 'paid') {
+      notify('error', 'Paid invoices are locked and cannot be edited. Please issue a revised invoice or credit note.');
+      return;
+    }
+    try {
+      const res = await apiFetch<{ invoice: DocumentDto & { items: any[] } }>(`/api/invoices/${inv.id}`);
+      const fullDoc = res.invoice;
+      setEditingDocId(fullDoc.id);
+      setDocFormType('invoice');
+      setDocNumber(fullDoc.documentNumber);
+      setDocClientId(fullDoc.clientId);
+      setDocIssueDate(fullDoc.issueDate);
+      setDocDueDate(fullDoc.dueDate);
+      setDocCurrency(fullDoc.currency);
+      setDocDiscountType(fullDoc.discountType || 'percentage');
+      setDocDiscountValue(fullDoc.discountValue || 0);
+      setDocNotes(fullDoc.notes || '');
+      if (fullDoc.items && fullDoc.items.length > 0) {
+        setDocItems(
+          fullDoc.items.map((it) => ({
+            name: it.name,
+            description: it.description || '',
+            quantity: it.quantity,
+            unit: it.unit || 'hrs',
+            unitPrice: it.unitPrice,
+            discountType: it.discountType || 'percentage',
+            discountValue: it.discountValue || 0,
+            taxName: it.taxName || 'Tax',
+            taxRate: it.taxRate || 0,
+            taxCompound: Boolean(it.taxCompound),
+          }))
+        );
+      }
+      setDocModalOpen(true);
+    } catch (err: any) {
+      notify('error', `Failed to open invoice for editing: ${err.message}`);
+    }
+  };
+
+  const openEditEstimateModal = async (est: DocumentDto) => {
+    if (est.status === 'converted') {
+      notify('error', 'Converted estimates are locked and cannot be modified.');
+      return;
+    }
+    try {
+      const res = await apiFetch<{ estimate: DocumentDto & { items: any[] } }>(`/api/estimates/${est.id}`);
+      const fullDoc = res.estimate;
+      setEditingDocId(fullDoc.id);
+      setDocFormType('estimate');
+      setDocNumber(fullDoc.documentNumber);
+      setDocClientId(fullDoc.clientId);
+      setDocIssueDate(fullDoc.issueDate);
+      setDocDueDate(fullDoc.dueDate);
+      setDocCurrency(fullDoc.currency);
+      setDocDiscountType(fullDoc.discountType || 'percentage');
+      setDocDiscountValue(fullDoc.discountValue || 0);
+      setDocNotes(fullDoc.notes || '');
+      if (fullDoc.items && fullDoc.items.length > 0) {
+        setDocItems(
+          fullDoc.items.map((it) => ({
+            name: it.name,
+            description: it.description || '',
+            quantity: it.quantity,
+            unit: it.unit || 'hrs',
+            unitPrice: it.unitPrice,
+            discountType: it.discountType || 'percentage',
+            discountValue: it.discountValue || 0,
+            taxName: it.taxName || 'Tax',
+            taxRate: it.taxRate || 0,
+            taxCompound: Boolean(it.taxCompound),
+          }))
+        );
+      }
+      setDocModalOpen(true);
+    } catch (err: any) {
+      notify('error', `Failed to open estimate for editing: ${err.message}`);
+    }
+  };
+
   const handleCreateDocument = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      if (editingDocId) {
+        const endpoint =
+          docFormType === 'estimate'
+            ? `/api/estimates/${editingDocId}`
+            : `/api/invoices/${editingDocId}`;
+        await apiFetch(endpoint, {
+          method: 'PUT',
+          body: JSON.stringify({
+            clientId: docClientId,
+            issueDate: docIssueDate,
+            dueDate: docDueDate,
+            currency: docCurrency,
+            discountType: docDiscountType,
+            discountValue: Number(docDiscountValue),
+            notes: docNotes,
+            items: docItems,
+          }),
+        });
+        setDocModalOpen(false);
+        setEditingDocId(null);
+        notify(
+          'success',
+          `${docFormType === 'estimate' ? 'Estimate' : 'Invoice'} ${docNumber} updated successfully.`
+        );
+        await refreshWorkspace();
+        return;
+      }
+
       const endpoint = docFormType === 'estimate' ? '/api/estimates' : '/api/invoices';
       await apiFetch(endpoint, {
         method: 'POST',
@@ -679,7 +819,7 @@ export function App() {
       );
       await refreshWorkspace();
     } catch (err) {
-      notify('error', err instanceof Error ? err.message : 'Failed to create document');
+      notify('error', err instanceof Error ? err.message : 'Failed to save document');
     }
   };
 
@@ -1045,11 +1185,7 @@ export function App() {
               <Button
                 variant="primary"
                 size="sm"
-                onClick={() => {
-                  const nextPrefix = docFormType === 'estimate' ? 'EST' : 'INV';
-                  setDocNumber(`${nextPrefix}-2026-${Math.floor(1000 + Math.random() * 9000)}`);
-                  setDocModalOpen(true);
-                }}
+                onClick={() => openCreateDocumentModal('invoice')}
               >
                 <Plus className="w-3.5 h-3.5" />
                 New Quote / Invoice
@@ -1563,6 +1699,26 @@ export function App() {
                                 Convert to Invoice
                               </Button>
                             )}
+                            {est.status !== 'converted' ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => void openEditEstimateModal(est)}
+                                className="border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                title="Edit estimate line items, rates, and terms"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                                Edit
+                              </Button>
+                            ) : (
+                              <span
+                                className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-slate-400 bg-slate-100 dark:bg-slate-800 dark:text-slate-500 cursor-not-allowed"
+                                title="Converted estimates are finalized"
+                              >
+                                <Lock className="w-3 h-3" />
+                                Locked
+                              </span>
+                            )}
                             <Button
                               size="sm"
                               variant="outline"
@@ -1698,6 +1854,26 @@ export function App() {
                               >
                                 Mark Overdue
                               </Button>
+                            )}
+                            {inv.status !== 'paid' ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => void openEditInvoiceModal(inv)}
+                                className="border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                title="Modify invoice line items, dates, discounts, or terms"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                                Edit
+                              </Button>
+                            ) : (
+                              <span
+                                className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-slate-400 bg-slate-100 dark:bg-slate-800 dark:text-slate-500 cursor-not-allowed"
+                                title="Paid invoices are finalized and locked against edits"
+                              >
+                                <Lock className="w-3 h-3" />
+                                Locked
+                              </span>
                             )}
                             <Button
                               size="sm"
@@ -2564,11 +2740,21 @@ export function App() {
         </Tabs>
       </main>
 
-      {/* New Invoice / New Quote Modal with Quick Catalog Picker & Embedded CSV Import */}
+      {/* New Invoice / New Quote / Edit Document Modal */}
       <Dialog open={docModalOpen} onOpenChange={setDocModalOpen}>
         <DialogModal
-          title={docFormType === 'estimate' ? 'Create Estimate / Quote' : 'Create Invoice'}
-          description="Atomic D1 batch parent-child insert with live line-items calculation, catalog picker, and CSV import."
+          title={
+            editingDocId
+              ? `Edit ${docFormType === 'estimate' ? 'Estimate / Quote' : 'Invoice'}: ${docNumber}`
+              : docFormType === 'estimate'
+              ? 'Create Estimate / Quote'
+              : 'Create Invoice'
+          }
+          description={
+            editingDocId
+              ? 'Modify line items, quantities, rates, discounts, and terms before final payment.'
+              : 'Atomic D1 batch parent-child insert with live line-items calculation, catalog picker, and CSV import.'
+          }
           className="max-w-4xl"
         >
           <form onSubmit={handleCreateDocument} className="space-y-4">
@@ -2576,6 +2762,7 @@ export function App() {
               <div>
                 <Label>Document Type</Label>
                 <select
+                  disabled={Boolean(editingDocId)}
                   value={docFormType}
                   onChange={(e) => {
                     const t = e.target.value as 'estimate' | 'invoice';
@@ -2586,7 +2773,7 @@ export function App() {
                       )}`
                     );
                   }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:opacity-60 disabled:cursor-not-allowed dark:border-slate-800 dark:bg-slate-900 dark:text-white"
                 >
                   <option value="invoice">Invoice</option>
                   <option value="estimate">Estimate / Quote</option>
@@ -2597,6 +2784,7 @@ export function App() {
                 <Input
                   value={docNumber}
                   onChange={(e) => setDocNumber(e.target.value)}
+                  disabled={Boolean(editingDocId)}
                   required
                 />
               </div>
@@ -2882,7 +3070,7 @@ export function App() {
 
             <div className="flex justify-end gap-2">
               <Button type="submit" variant="primary">
-                Commit Document to D1
+                {editingDocId ? 'Save & Update Document' : 'Commit Document to D1'}
               </Button>
             </div>
           </form>
