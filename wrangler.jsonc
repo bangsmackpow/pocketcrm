@@ -17,7 +17,7 @@
   "vars": {
     "APP_NAME": "PocketCRM",
     "BETTER_AUTH_URL": "https://pocketcrm.curtislamasters.workers.dev",
-    "EMAIL_FROM": "billing@builtnetworks.com",
+    "EMAIL_FROM": "invoicing@billing.builtnetworks.com",
     "EMAIL_FROM_NAME": "Built Networks Invoicing"
   },
   "send_email": [

@@ -214,7 +214,7 @@ export async function sendDocumentEmail(options: SendDocumentEmailOptions): Prom
   const docTypeLabel = isInvoice ? 'Invoice' : 'Estimate';
   
   // Sender email and name
-  const senderEmail = options.senderEmail || env.EMAIL_FROM || 'billing@builtnetworks.com';
+  const senderEmail = options.senderEmail || env.EMAIL_FROM || 'invoicing@billing.builtnetworks.com';
   const senderName = options.senderName || env.EMAIL_FROM_NAME || 'Built Networks Invoicing';
 
   const defaultSubject = `[${docTypeLabel}] #${doc.documentNumber} from ${senderName}`;

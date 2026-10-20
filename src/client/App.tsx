@@ -2903,7 +2903,7 @@ export function App() {
               <p className="mt-1 text-slate-600 dark:text-slate-300">
                 Dispatched securely from{' '}
                 <span className="font-mono font-medium text-slate-900 dark:text-slate-100">
-                  billing@builtnetworks.com
+                  invoicing@billing.builtnetworks.com
                 </span>{' '}
                 with attached PDF (
                 <span className="font-mono">{emailDoc?.documentNumber}.pdf</span>) and responsive HTML summary.
