@@ -1,0 +1,494 @@
+import { Hono } from 'hono';
+import { z } from 'zod';
+import { zValidator } from '@hono/zod-validator';
+import { eq, and, desc, asc } from 'drizzle-orm';
+import {
+  documents,
+  documentItems,
+  clients,
+  documentTemplates,
+  type EstimateStatus,
+} from '../db/schema';
+import { requireRole, type AppEnv } from '../lib/auth';
+import {
+  calculateDocumentTotals,
+  canTransitionEstimate,
+} from '../lib/calculations';
+import {
+  generateDocumentPdfBuffer,
+  renderDocumentTemplateHtml,
+} from '../lib/pdf';
+import { putDocumentPdf } from '../lib/r2';
+import { recordAuditLog } from '../lib/audit';
+
+export const estimateRoutes = new Hono<AppEnv>();
+
+const lineItemSchema = z.object({
+  name: z.string().trim().min(1, 'Item name is required'),
+  description: z.string().optional().default(''),
+  quantity: z.coerce.number().positive(),
+  unit: z.string().optional().default('hrs'),
+  unitPrice: z.coerce.number().min(0),
+  discountType: z.enum(['percentage', 'fixed']).optional().default('percentage'),
+  discountValue: z.coerce.number().min(0).optional().default(0),
+  taxName: z.string().optional().default('Tax'),
+  taxRate: z.coerce.number().min(0).max(100).optional().default(0),
+  taxCompound: z.boolean().optional().default(false),
+  secondTaxName: z.string().optional(),
+  secondTaxRate: z.coerce.number().min(0).max(100).optional().default(0),
+  secondTaxCompound: z.boolean().optional().default(false),
+});
+
+const createEstimateSchema = z.object({
+  documentNumber: z.string().trim().min(1),
+  clientId: z.string().trim().min(1),
+  templateId: z.string().optional(),
+  issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  currency: z.string().length(3).toUpperCase().default('USD'),
+  discountType: z.enum(['percentage', 'fixed']).default('percentage'),
+  discountValue: z.coerce.number().min(0).default(0),
+  notes: z.string().optional(),
+  terms: z.string().optional(),
+  items: z.array(lineItemSchema).min(1, 'At least one line item is required'),
+});
+
+/**
+ * List all estimates/quotes with client metadata
+ */
+estimateRoutes.get('/', requireRole('viewer'), async (c) => {
+  const db = c.get('db');
+  const statusFilter = c.req.query('status') as EstimateStatus | undefined;
+
+  const rows = await db
+    .select({
+      document: documents,
+      client: {
+        id: clients.id,
+        code: clients.code,
+        companyName: clients.companyName,
+        contactName: clients.contactName,
+        email: clients.email,
+      },
+    })
+    .from(documents)
+    .innerJoin(clients, eq(documents.clientId, clients.id))
+    .where(
+      statusFilter
+        ? and(eq(documents.type, 'estimate'), eq(documents.status, statusFilter))
+        : eq(documents.type, 'estimate')
+    )
+    .orderBy(desc(documents.issueDate), desc(documents.createdAt));
+
+  return c.json({
+    estimates: rows.map((r) => ({
+      ...r.document,
+      client: r.client,
+    })),
+  });
+});
+
+/**
+ * Get single estimate with line items, client, and template
+ */
+estimateRoutes.get('/:id', requireRole('viewer'), async (c) => {
+  const db = c.get('db');
+  const id = c.req.param('id');
+
+  const [doc] = await db
+    .select()
+    .from(documents)
+    .where(and(eq(documents.id, id), eq(documents.type, 'estimate')))
+    .limit(1);
+
+  if (!doc) {
+    return c.json({ error: 'Estimate not found' }, 404);
+  }
+
+  const [client] = await db
+    .select()
+    .from(clients)
+    .where(eq(clients.id, doc.clientId))
+    .limit(1);
+
+  const items = await db
+    .select()
+    .from(documentItems)
+    .where(eq(documentItems.documentId, doc.id))
+    .orderBy(asc(documentItems.sortOrder));
+
+  return c.json({
+    estimate: {
+      ...doc,
+      client,
+      items,
+    },
+  });
+});
+
+/**
+ * Create a new Estimate/Quote using atomic D1 db.batch()
+ */
+estimateRoutes.post(
+  '/',
+  requireRole('member'),
+  zValidator('json', createEstimateSchema),
+  async (c) => {
+    const db = c.get('db');
+    const user = c.get('user');
+    const body = c.req.valid('json');
+    const now = new Date();
+    const docId = `doc_est_${crypto.randomUUID().slice(0, 12)}`;
+
+    const calc = calculateDocumentTotals(
+      body.items,
+      body.discountType,
+      body.discountValue,
+      0
+    );
+
+    const headerInsert = db.insert(documents).values({
+      id: docId,
+      documentNumber: body.documentNumber,
+      type: 'estimate',
+      status: 'draft',
+      clientId: body.clientId,
+      templateId: body.templateId ?? 'tpl_modern_slate',
+      issueDate: body.issueDate,
+      dueDate: body.dueDate,
+      currency: body.currency,
+      discountType: body.discountType,
+      discountValue: body.discountValue,
+      subtotal: calc.subtotal,
+      discountTotal: calc.discountTotal,
+      taxTotal: calc.taxTotal,
+      total: calc.total,
+      amountPaid: 0,
+      amountDue: calc.total,
+      notes: body.notes ?? null,
+      terms: body.terms ?? 'Valid for 30 days',
+      createdBy: user?.id ?? null,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const itemInserts = calc.items.map((item, idx) =>
+      db.insert(documentItems).values({
+        id: `item_${crypto.randomUUID().slice(0, 12)}`,
+        documentId: docId,
+        sortOrder: idx,
+        name: item.name,
+        description: item.description ?? '',
+        quantity: item.quantity,
+        unit: item.unit ?? 'hrs',
+        unitPrice: item.unitPrice,
+        discountType: item.discountType ?? 'percentage',
+        discountValue: item.discountValue ?? 0,
+        taxName: item.taxName ?? 'Tax',
+        taxRate: item.taxRate ?? 0,
+        taxCompound: Boolean(item.taxCompound),
+        secondTaxName: item.secondTaxName ?? null,
+        secondTaxRate: item.secondTaxRate ?? 0,
+        secondTaxCompound: Boolean(item.secondTaxCompound),
+        lineSubtotal: item.lineSubtotal,
+        lineDiscountAmount: item.lineDiscountAmount,
+        lineTaxAmount: item.lineTaxAmount,
+        lineTotal: item.lineTotal,
+        createdAt: now,
+      })
+    );
+
+    await db.batch([headerInsert, ...itemInserts]);
+
+    await recordAuditLog({
+      db,
+      user,
+      action: 'estimate.created',
+      entityType: 'estimate',
+      entityId: docId,
+      metadata: {
+        documentNumber: body.documentNumber,
+        total: calc.total,
+        currency: body.currency,
+      },
+    });
+
+    const [created] = await db.select().from(documents).where(eq(documents.id, docId)).limit(1);
+    return c.json({ estimate: created, calculation: calc }, 201);
+  }
+);
+
+/**
+ * State Machine Transition for Estimate:
+ * Draft -> Sent -> Approved/Rejected -> Converted to Invoice
+ */
+const statusSchema = z.object({
+  status: z.enum(['draft', 'sent', 'approved', 'rejected', 'converted']),
+});
+
+estimateRoutes.patch(
+  '/:id/status',
+  requireRole('member'),
+  zValidator('json', statusSchema),
+  async (c) => {
+    const db = c.get('db');
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const { status: nextStatus } = c.req.valid('json');
+
+    const [existing] = await db
+      .select()
+      .from(documents)
+      .where(and(eq(documents.id, id), eq(documents.type, 'estimate')))
+      .limit(1);
+
+    if (!existing) {
+      return c.json({ error: 'Estimate not found' }, 404);
+    }
+
+    if (!canTransitionEstimate(existing.status, nextStatus)) {
+      return c.json(
+        {
+          error: 'Invalid State Transition',
+          message: `Cannot transition estimate from "${existing.status}" to "${nextStatus}". Allowed workflow: Draft -> Sent -> Approved/Rejected -> Converted.`,
+        },
+        400
+      );
+    }
+
+    const [updated] = await db
+      .update(documents)
+      .set({ status: nextStatus, updatedAt: new Date() })
+      .where(eq(documents.id, id))
+      .returning();
+
+    await recordAuditLog({
+      db,
+      user,
+      action: 'estimate.status_transition',
+      entityType: 'estimate',
+      entityId: id,
+      metadata: {
+        documentNumber: existing.documentNumber,
+        from: existing.status,
+        to: nextStatus,
+      },
+    });
+
+    return c.json({ estimate: updated });
+  }
+);
+
+/**
+ * Convert an Approved Estimate directly into an Invoice using atomic D1 db.batch()
+ */
+estimateRoutes.post('/:id/convert', requireRole('member'), async (c) => {
+  const db = c.get('db');
+  const user = c.get('user');
+  const id = c.req.param('id');
+
+  const [estimate] = await db
+    .select()
+    .from(documents)
+    .where(and(eq(documents.id, id), eq(documents.type, 'estimate')))
+    .limit(1);
+
+  if (!estimate) {
+    return c.json({ error: 'Estimate not found' }, 404);
+  }
+
+  if (estimate.status === 'converted' && estimate.convertedToDocumentId) {
+    return c.json(
+      {
+        error: 'Already Converted',
+        message: `Estimate ${estimate.documentNumber} was already converted to invoice ${estimate.convertedToDocumentId}.`,
+      },
+      400
+    );
+  }
+
+  if (estimate.status !== 'approved' && estimate.status !== 'sent') {
+    return c.json(
+      {
+        error: 'Invalid State for Conversion',
+        message: `Estimate must be in "approved" or "sent" status before converting to an Invoice (current: "${estimate.status}").`,
+      },
+      400
+    );
+  }
+
+  const items = await db
+    .select()
+    .from(documentItems)
+    .where(eq(documentItems.documentId, estimate.id))
+    .orderBy(asc(documentItems.sortOrder));
+
+  const now = new Date();
+  const newInvoiceId = `doc_inv_${crypto.randomUUID().slice(0, 12)}`;
+  const invoiceNumber = estimate.documentNumber.replace(/^(EST|QUO)/i, 'INV') +
+    (estimate.documentNumber.match(/^(EST|QUO)/i) ? '' : `-INV-${Date.now().toString().slice(-4)}`);
+
+  const issueDate = now.toISOString().slice(0, 10);
+  const dueDateObj = new Date(now.getTime() + 30 * 86400 * 1000);
+  const dueDate = dueDateObj.toISOString().slice(0, 10);
+
+  const insertInvoice = db.insert(documents).values({
+    id: newInvoiceId,
+    documentNumber: invoiceNumber,
+    type: 'invoice',
+    status: 'draft',
+    clientId: estimate.clientId,
+    templateId: estimate.templateId,
+    sourceEstimateId: estimate.id,
+    issueDate,
+    dueDate,
+    currency: estimate.currency,
+    discountType: estimate.discountType,
+    discountValue: estimate.discountValue,
+    subtotal: estimate.subtotal,
+    discountTotal: estimate.discountTotal,
+    taxTotal: estimate.taxTotal,
+    total: estimate.total,
+    amountPaid: 0,
+    amountDue: estimate.total,
+    notes: estimate.notes,
+    terms: 'Converted from Estimate ' + estimate.documentNumber,
+    createdBy: user?.id ?? null,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const cloneItems = items.map((item) =>
+    db.insert(documentItems).values({
+      id: `item_${crypto.randomUUID().slice(0, 12)}`,
+      documentId: newInvoiceId,
+      sortOrder: item.sortOrder,
+      name: item.name,
+      description: item.description,
+      quantity: item.quantity,
+      unit: item.unit,
+      unitPrice: item.unitPrice,
+      discountType: item.discountType,
+      discountValue: item.discountValue,
+      taxName: item.taxName,
+      taxRate: item.taxRate,
+      taxCompound: item.taxCompound,
+      secondTaxName: item.secondTaxName,
+      secondTaxRate: item.secondTaxRate,
+      secondTaxCompound: item.secondTaxCompound,
+      lineSubtotal: item.lineSubtotal,
+      lineDiscountAmount: item.lineDiscountAmount,
+      lineTaxAmount: item.lineTaxAmount,
+      lineTotal: item.lineTotal,
+      createdAt: now,
+    })
+  );
+
+  const markEstimateConverted = db
+    .update(documents)
+    .set({
+      status: 'converted',
+      convertedToDocumentId: newInvoiceId,
+      updatedAt: now,
+    })
+    .where(eq(documents.id, estimate.id));
+
+  await db.batch([insertInvoice, ...cloneItems, markEstimateConverted]);
+
+  await recordAuditLog({
+    db,
+    user,
+    action: 'estimate.converted_to_invoice',
+    entityType: 'estimate',
+    entityId: estimate.id,
+    metadata: {
+      estimateNumber: estimate.documentNumber,
+      invoiceId: newInvoiceId,
+      invoiceNumber,
+    },
+  });
+
+  const [createdInvoice] = await db
+    .select()
+    .from(documents)
+    .where(eq(documents.id, newInvoiceId))
+    .limit(1);
+
+  return c.json({
+    converted: true,
+    estimateId: estimate.id,
+    invoice: createdInvoice,
+  });
+});
+
+/**
+ * Render HTML preview or generate & persist PDF to Cloudflare R2
+ */
+estimateRoutes.get('/:id/pdf', requireRole('viewer'), async (c) => {
+  const db = c.get('db');
+  const id = c.req.param('id');
+  const format = c.req.query('format') || 'pdf';
+
+  const [doc] = await db
+    .select()
+    .from(documents)
+    .where(and(eq(documents.id, id), eq(documents.type, 'estimate')))
+    .limit(1);
+
+  if (!doc) {
+    return c.json({ error: 'Estimate not found' }, 404);
+  }
+
+  const [client] = await db.select().from(clients).where(eq(clients.id, doc.clientId)).limit(1);
+  const items = await db
+    .select()
+    .from(documentItems)
+    .where(eq(documentItems.documentId, doc.id))
+    .orderBy(asc(documentItems.sortOrder));
+
+  const [template] = doc.templateId
+    ? await db
+        .select()
+        .from(documentTemplates)
+        .where(eq(documentTemplates.id, doc.templateId))
+        .limit(1)
+    : [];
+
+  if (format === 'html') {
+    const html = renderDocumentTemplateHtml({
+      document: doc,
+      client,
+      items,
+      template,
+    });
+    return c.html(html);
+  }
+
+  const pdfBytes = generateDocumentPdfBuffer({
+    document: doc,
+    client,
+    items,
+    template,
+  });
+
+  // Store generated PDF in R2 bucket if available
+  if (c.env.STORAGE) {
+    const stored = await putDocumentPdf(
+      c.env.STORAGE,
+      'estimate',
+      doc.documentNumber,
+      pdfBytes
+    );
+    await db
+      .update(documents)
+      .set({ pdfR2Key: stored.key, updatedAt: new Date() })
+      .where(eq(documents.id, doc.id));
+  }
+
+  return new Response(pdfBytes.buffer as ArrayBuffer, {
+    headers: {
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="${doc.documentNumber}.pdf"`,
+    },
+  });
+});
