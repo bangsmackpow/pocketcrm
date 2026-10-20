@@ -28,6 +28,8 @@ import {
   Package,
   History,
   Image as ImageIcon,
+  Mail,
+  Send,
 } from 'lucide-react';
 import {
   Button,
@@ -57,6 +59,8 @@ import {
   updateCatalogItem,
   deleteCatalogItem,
   uploadLogo,
+  sendInvoiceEmail,
+  sendEstimateEmail,
   type AuthUser,
   type ManagedUser,
   type CatalogItem,
@@ -181,6 +185,14 @@ export function App() {
   const [clientImportErrors, setClientImportErrors] = useState<
     Array<{ rowNumber: number; field: string; message: string }>
   >([]);
+
+  // Native Cloudflare Email Dispatch Modal State
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailDoc, setEmailDoc] = useState<DocumentDto | null>(null);
+  const [emailRecipient, setEmailRecipient] = useState('');
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailCustomMessage, setEmailCustomMessage] = useState('');
+  const [emailSending, setEmailSending] = useState(false);
 
   // New Document (Estimate / Invoice) Composer State
   const [docModalOpen, setDocModalOpen] = useState(false);
@@ -727,6 +739,58 @@ export function App() {
       await refreshWorkspace();
     } catch (err) {
       notify('error', err instanceof Error ? err.message : 'Payment recording failed');
+    }
+  };
+
+  const openSendEstimateModal = (est: DocumentDto) => {
+    setEmailDoc(est);
+    const client = clients.find((c) => c.id === est.clientId);
+    setEmailRecipient(client?.email || '');
+    setEmailSubject(`Estimate #${est.documentNumber} from Built Networks`);
+    setEmailCustomMessage('');
+    setEmailModalOpen(true);
+  };
+
+  const openSendInvoiceModal = (inv: DocumentDto) => {
+    setEmailDoc(inv);
+    const client = clients.find((c) => c.id === inv.clientId);
+    setEmailRecipient(client?.email || '');
+    setEmailSubject(`Invoice #${inv.documentNumber} from Built Networks`);
+    setEmailCustomMessage('');
+    setEmailModalOpen(true);
+  };
+
+  const handleSendEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!emailDoc || !emailRecipient) return;
+    setEmailSending(true);
+    try {
+      const payload = {
+        recipientEmail: emailRecipient,
+        subject: emailSubject,
+        customMessage: emailCustomMessage,
+      };
+      const res =
+        emailDoc.type === 'invoice'
+          ? await sendInvoiceEmail(emailDoc.id, payload)
+          : await sendEstimateEmail(emailDoc.id, payload);
+
+      if (res.success) {
+        notify(
+          'success',
+          res.simulated
+            ? `Email simulated to ${emailRecipient} (native send_email binding ready).`
+            : `Dispatched native Cloudflare email + PDF to ${emailRecipient}!`
+        );
+        setEmailModalOpen(false);
+        await refreshWorkspace();
+      } else {
+        notify('error', `Dispatch failed: ${res.message}`);
+      }
+    } catch (err) {
+      notify('error', err instanceof Error ? err.message : 'Failed to send email');
+    } finally {
+      setEmailSending(false);
     }
   };
 
@@ -1499,6 +1563,16 @@ export function App() {
                                 Convert to Invoice
                               </Button>
                             )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openSendEstimateModal(est)}
+                              className="border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
+                              title="Send to client via Cloudflare Native Email"
+                            >
+                              <Mail className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                              Email
+                            </Button>
                             <a
                               href={`/api/estimates/${est.id}/pdf?format=html`}
                               target="_blank"
@@ -1625,6 +1699,16 @@ export function App() {
                                 Mark Overdue
                               </Button>
                             )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openSendInvoiceModal(inv)}
+                              className="border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
+                              title="Send to client via Cloudflare Native Email"
+                            >
+                              <Mail className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                              Email
+                            </Button>
                             <a
                               href={`/api/invoices/${inv.id}/pdf?format=html`}
                               target="_blank"
@@ -2799,6 +2883,89 @@ export function App() {
             <div className="flex justify-end gap-2">
               <Button type="submit" variant="primary">
                 Commit Document to D1
+              </Button>
+            </div>
+          </form>
+        </DialogModal>
+      </Dialog>
+
+      {/* 7. NATIVE CLOUDFLARE EMAIL DISPATCH MODAL */}
+      <Dialog open={emailModalOpen} onOpenChange={setEmailModalOpen}>
+        <DialogModal
+          title={`Send ${emailDoc?.type === 'invoice' ? 'Invoice' : 'Estimate'} via Native Cloudflare Email`}
+        >
+          <form onSubmit={handleSendEmail} className="space-y-4">
+            <div className="rounded-lg bg-indigo-50 p-3.5 text-xs text-indigo-900 border border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-200 dark:border-indigo-800/60">
+              <div className="flex items-center gap-2 font-semibold">
+                <Mail className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                Cloudflare Native Edge Email (`send_email` binding)
+              </div>
+              <p className="mt-1 text-slate-600 dark:text-slate-300">
+                Dispatched securely from{' '}
+                <span className="font-mono font-medium text-slate-900 dark:text-slate-100">
+                  billing@builtnetworks.com
+                </span>{' '}
+                with attached PDF (
+                <span className="font-mono">{emailDoc?.documentNumber}.pdf</span>) and responsive HTML summary.
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <Label>Recipient Email Address *</Label>
+              <Input
+                type="email"
+                required
+                value={emailRecipient}
+                onChange={(e) => setEmailRecipient(e.target.value)}
+                placeholder="client-ap@domain.com"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <Label>Subject Line</Label>
+              <Input
+                value={emailSubject}
+                onChange={(e) => setEmailSubject(e.target.value)}
+                placeholder="Subject"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <Label>Optional Personal Note / Custom Message</Label>
+              <textarea
+                rows={3}
+                value={emailCustomMessage}
+                onChange={(e) => setEmailCustomMessage(e.target.value)}
+                placeholder="e.g. Hi Sarah, here is the updated document. Please let us know if you have any questions!"
+                className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setEmailModalOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={emailSending}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              >
+                {emailSending ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Dispatching via Cloudflare...
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-3.5 h-3.5" />
+                    Send Email + PDF
+                  </>
+                )}
               </Button>
             </div>
           </form>

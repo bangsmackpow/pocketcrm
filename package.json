@@ -21,6 +21,7 @@
     "drizzle-orm": "^0.45.2",
     "hono": "^4.7.4",
     "lucide-react": "^0.483.0",
+    "mimetext": "^3.0.28",
     "papaparse": "^5.5.2",
     "radix-ui": "^1.4.2",
     "react": "^19.0.0",

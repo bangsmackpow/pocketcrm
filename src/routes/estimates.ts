@@ -20,6 +20,7 @@ import {
 } from '../lib/pdf';
 import { putDocumentPdf } from '../lib/r2';
 import { recordAuditLog } from '../lib/audit';
+import { sendDocumentEmail } from '../lib/email';
 
 export const estimateRoutes = new Hono<AppEnv>();
 
@@ -492,3 +493,103 @@ estimateRoutes.get('/:id/pdf', requireRole('viewer'), async (c) => {
     },
   });
 });
+
+/**
+ * Send estimate/quote to client via Cloudflare Native Email
+ */
+estimateRoutes.post('/:id/send', requireRole('member'), async (c) => {
+  const db = c.get('db');
+  const id = c.req.param('id');
+
+  const body = await c.req.json().catch(() => ({}));
+  const { recipientEmail, subject, customMessage } = body as {
+    recipientEmail?: string;
+    subject?: string;
+    customMessage?: string;
+  };
+
+  const [doc] = await db
+    .select()
+    .from(documents)
+    .where(and(eq(documents.id, id), eq(documents.type, 'estimate')))
+    .limit(1);
+
+  if (!doc) {
+    return c.json({ error: 'Estimate not found' }, 404);
+  }
+
+  const [client] = await db.select().from(clients).where(eq(clients.id, doc.clientId)).limit(1);
+  if (!client) {
+    return c.json({ error: 'Client not found' }, 404);
+  }
+
+  const items = await db
+    .select()
+    .from(documentItems)
+    .where(eq(documentItems.documentId, doc.id))
+    .orderBy(asc(documentItems.sortOrder));
+
+  const [template] = doc.templateId
+    ? await db
+        .select()
+        .from(documentTemplates)
+        .where(eq(documentTemplates.id, doc.templateId))
+        .limit(1)
+    : [];
+
+  const targetRecipient = (recipientEmail || client.email || '').trim();
+  if (!targetRecipient) {
+    return c.json({ error: 'Client has no email address configured and none was provided.' }, 400);
+  }
+
+  const emailResult = await sendDocumentEmail({
+    env: c.env,
+    ctx: {
+      document: doc,
+      client,
+      items,
+      template,
+    },
+    recipientEmail: targetRecipient,
+    recipientName: client.contactName || client.companyName,
+    subject,
+    customMessage,
+  });
+
+  if (!emailResult.success) {
+    return c.json({ error: emailResult.error || 'Failed to dispatch email' }, 500);
+  }
+
+  // Advance status from draft to sent if needed
+  if (doc.status === 'draft') {
+    await db
+      .update(documents)
+      .set({
+        status: 'sent',
+        updatedAt: new Date(),
+      })
+      .where(eq(documents.id, doc.id));
+  }
+
+  const user = c.get('user');
+  await recordAuditLog({
+    db,
+    user,
+    action: 'estimate.emailed',
+    entityType: 'estimate',
+    entityId: doc.id,
+    metadata: {
+      documentNumber: doc.documentNumber,
+      recipient: targetRecipient,
+      simulated: emailResult.simulated ?? false,
+      messageId: emailResult.messageId,
+    },
+  });
+
+  return c.json({
+    success: true,
+    message: `Estimate ${doc.documentNumber} dispatched successfully to ${targetRecipient}${emailResult.simulated ? ' (simulated)' : ''}`,
+    simulated: emailResult.simulated ?? false,
+  });
+});
+

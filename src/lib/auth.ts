@@ -9,9 +9,12 @@ export interface CloudflareBindings {
   DB: D1Database;
   STORAGE: R2Bucket;
   ASSETS?: Fetcher;
+  EMAIL?: SendEmail;
   BETTER_AUTH_SECRET?: string;
   BETTER_AUTH_URL?: string;
   APP_NAME?: string;
+  EMAIL_FROM?: string;
+  EMAIL_FROM_NAME?: string;
 }
 
 export interface AuthenticatedUser {

@@ -16,8 +16,15 @@
   },
   "vars": {
     "APP_NAME": "PocketCRM",
-    "BETTER_AUTH_URL": "https://pocketcrm.curtislamasters.workers.dev"
+    "BETTER_AUTH_URL": "https://pocketcrm.curtislamasters.workers.dev",
+    "EMAIL_FROM": "billing@builtnetworks.com",
+    "EMAIL_FROM_NAME": "Built Networks Invoicing"
   },
+  "send_email": [
+    {
+      "name": "EMAIL"
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",

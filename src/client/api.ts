@@ -246,3 +246,36 @@ export async function uploadLogo(
   });
   return res.logoUrl;
 }
+
+// Native Cloudflare Email Dispatch
+export interface SendEmailPayload {
+  recipientEmail?: string;
+  subject?: string;
+  customMessage?: string;
+}
+
+export async function sendInvoiceEmail(
+  id: string,
+  payload: SendEmailPayload
+): Promise<{ success: boolean; message: string; simulated?: boolean }> {
+  return await apiFetch<{ success: boolean; message: string; simulated?: boolean }>(
+    `/api/invoices/${id}/send`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function sendEstimateEmail(
+  id: string,
+  payload: SendEmailPayload
+): Promise<{ success: boolean; message: string; simulated?: boolean }> {
+  return await apiFetch<{ success: boolean; message: string; simulated?: boolean }>(
+    `/api/estimates/${id}/send`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+}
