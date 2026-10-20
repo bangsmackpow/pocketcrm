@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS `document_templates` (
   `name` text NOT NULL,
   `is_default` integer DEFAULT 0 NOT NULL,
   `logo_r2_key` text,
+  `logo_url` text,
   `logo_placement` text DEFAULT 'left' NOT NULL,
   `company_header_text` text DEFAULT 'PocketCRM Solutions Inc.' NOT NULL,
   `payment_instructions` text NOT NULL,
@@ -164,6 +165,18 @@ CREATE TABLE IF NOT EXISTS `document_items` (
 );
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS `document_items_doc_id_idx` ON `document_items` (`document_id`);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `catalog_items` (
+  `id` text PRIMARY KEY NOT NULL,
+  `name` text NOT NULL,
+  `description` text DEFAULT '',
+  `unit_price` real DEFAULT 0 NOT NULL,
+  `unit` text DEFAULT 'hrs' NOT NULL,
+  `default_tax_rate` real DEFAULT 0 NOT NULL,
+  `is_active` integer DEFAULT 1 NOT NULL,
+  `created_at` integer DEFAULT (unixepoch() * 1000) NOT NULL,
+  `updated_at` integer DEFAULT (unixepoch() * 1000) NOT NULL
+);
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS `audit_logs` (
   `id` text PRIMARY KEY NOT NULL,

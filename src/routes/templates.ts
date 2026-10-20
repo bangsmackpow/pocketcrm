@@ -21,6 +21,7 @@ const upsertTemplateSchema = z.object({
   name: z.string().trim().min(1),
   isDefault: z.boolean().optional().default(false),
   logoPlacement: z.enum(['left', 'center', 'right']).default('left'),
+  logoUrl: z.string().optional().nullable(),
   companyHeaderText: z.string().min(1),
   paymentInstructions: z.string().min(1),
   footerLegalClause: z.string().min(1),
@@ -59,6 +60,7 @@ templateRoutes.post(
         name: body.name,
         isDefault: body.isDefault,
         logoPlacement: body.logoPlacement,
+        logoUrl: body.logoUrl ?? null,
         companyHeaderText: body.companyHeaderText,
         paymentInstructions: body.paymentInstructions,
         footerLegalClause: body.footerLegalClause,
@@ -83,7 +85,7 @@ templateRoutes.post(
 
 templateRoutes.put(
   '/:id',
-  requireRole('admin'),
+  requireRole('member'),
   zValidator('json', upsertTemplateSchema),
   async (c) => {
     const db = c.get('db');
@@ -101,6 +103,7 @@ templateRoutes.put(
         name: body.name,
         isDefault: body.isDefault,
         logoPlacement: body.logoPlacement,
+        ...(body.logoUrl !== undefined ? { logoUrl: body.logoUrl } : {}),
         companyHeaderText: body.companyHeaderText,
         paymentInstructions: body.paymentInstructions,
         footerLegalClause: body.footerLegalClause,
@@ -124,5 +127,74 @@ templateRoutes.put(
     });
 
     return c.json({ template: updated });
+  }
+);
+
+/**
+ * Upload logo for template and persist to Cloudflare R2
+ */
+templateRoutes.post(
+  '/:id/logo',
+  requireRole('member'),
+  zValidator(
+    'json',
+    z.object({
+      imageDataBase64: z.string().min(1),
+      filename: z.string().default('logo.png'),
+      contentType: z.string().default('image/png'),
+    })
+  ),
+  async (c) => {
+    const db = c.get('db');
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const { imageDataBase64, filename, contentType } = c.req.valid('json');
+
+    let logoUrl = imageDataBase64; // Fallback to inline data URL
+    let r2Key: string | null = null;
+
+    if (c.env.STORAGE) {
+      try {
+        const cleanBase64 = imageDataBase64.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
+        const binaryStr = atob(cleanBase64);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
+
+        const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+        r2Key = `logos/${id}_${Date.now()}_${safeFilename}`;
+
+        await c.env.STORAGE.put(r2Key, bytes, {
+          httpMetadata: { contentType },
+          customMetadata: { templateId: id, uploadedBy: user?.email ?? 'unknown' },
+        });
+
+        logoUrl = `/api/storage/${r2Key}`;
+      } catch (err) {
+        console.warn('[Logo Upload] Failed to write to R2, keeping data URL:', err);
+      }
+    }
+
+    const [updated] = await db
+      .update(documentTemplates)
+      .set({
+        logoUrl,
+        logoR2Key: r2Key,
+        updatedAt: new Date(),
+      })
+      .where(eq(documentTemplates.id, id))
+      .returning();
+
+    await recordAuditLog({
+      db,
+      user,
+      action: 'template.logo_uploaded',
+      entityType: 'template',
+      entityId: id,
+      metadata: { r2Key, filename },
+    });
+
+    return c.json({ template: updated, logoUrl });
   }
 );

@@ -13,6 +13,7 @@ import { invoiceRoutes } from './routes/invoices';
 import { estimateRoutes } from './routes/estimates';
 import { importRoutes } from './routes/import';
 import { templateRoutes } from './routes/templates';
+import { itemRoutes } from './routes/items';
 import {
   clients,
   documents,
@@ -123,6 +124,7 @@ app.route('/api/invoices', invoiceRoutes);
 app.route('/api/estimates', estimateRoutes);
 app.route('/api/import', importRoutes);
 app.route('/api/templates', templateRoutes);
+app.route('/api/items', itemRoutes);
 
 // Fallback to Cloudflare Pages/Workers SPA static assets
 app.all('*', async (c) => {

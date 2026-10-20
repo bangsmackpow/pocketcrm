@@ -226,7 +226,11 @@ export function renderDocumentTemplateHtml(ctx: DocumentRenderContext): string {
   <div class="doc-card">
     <div class="doc-header">
       <div class="logo-row">
-        <div class="brand-badge">POCKETCRM • ${escapeHtml(docTitle)}</div>
+        ${
+          template?.logoUrl
+            ? `<img src="${escapeHtml(template.logoUrl)}" alt="Logo" style="max-height: 54px; max-width: 220px; object-fit: contain;" />`
+            : `<div class="brand-badge">POCKETCRM • ${escapeHtml(docTitle)}</div>`
+        }
       </div>
       <div class="meta-grid">
         <div style="white-space:pre-line;font-size:13px;">${escapeHtml(companyHeader)}</div>

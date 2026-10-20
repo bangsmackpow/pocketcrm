@@ -16,6 +16,16 @@ export interface ManagedUser {
   updatedAt: string | number;
 }
 
+export interface CatalogItem {
+  id: string;
+  name: string;
+  description: string;
+  unitPrice: number;
+  unit: string;
+  defaultTaxRate: number;
+  isActive: boolean;
+}
+
 export interface ClientDto {
   id: string;
   code: string;
@@ -76,6 +86,7 @@ export interface TemplateDto {
   name: string;
   isDefault: boolean;
   logoPlacement: 'left' | 'center' | 'right';
+  logoUrl?: string | null;
   companyHeaderText: string;
   paymentInstructions: string;
   footerLegalClause: string;
@@ -129,6 +140,7 @@ export async function signOut(): Promise<void> {
   });
 }
 
+// User Management API
 export async function fetchUsers(): Promise<ManagedUser[]> {
   const res = await apiFetch<{ users: ManagedUser[] }>('/api/auth/users');
   return res.users || [];
@@ -177,4 +189,60 @@ export async function deleteManagedUser(id: string): Promise<void> {
   await apiFetch(`/api/auth/users/${id}`, {
     method: 'DELETE',
   });
+}
+
+// Product & Service Catalog API
+export async function fetchCatalogItems(): Promise<CatalogItem[]> {
+  const res = await apiFetch<{ items: CatalogItem[] }>('/api/items');
+  return res.items || [];
+}
+
+export async function createCatalogItem(data: {
+  name: string;
+  description?: string;
+  unitPrice: number;
+  unit: string;
+  defaultTaxRate?: number;
+}): Promise<CatalogItem> {
+  const res = await apiFetch<{ item: CatalogItem }>('/api/items', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  return res.item;
+}
+
+export async function updateCatalogItem(
+  id: string,
+  data: Partial<CatalogItem>
+): Promise<CatalogItem> {
+  const res = await apiFetch<{ item: CatalogItem }>(`/api/items/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+  return res.item;
+}
+
+export async function deleteCatalogItem(id: string): Promise<void> {
+  await apiFetch(`/api/items/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+// Logo Upload API
+export async function uploadLogo(
+  templateId: string,
+  imageDataBase64: string,
+  filename = 'logo.png'
+): Promise<string> {
+  const res = await apiFetch<{ logoUrl: string }>(`/api/templates/${templateId}/logo`, {
+    method: 'POST',
+    body: JSON.stringify({
+      imageDataBase64,
+      filename,
+      contentType: imageDataBase64.startsWith('data:image/svg')
+        ? 'image/svg+xml'
+        : 'image/png',
+    }),
+  });
+  return res.logoUrl;
 }

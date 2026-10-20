@@ -1,5 +1,17 @@
 -- PocketCRM Initial Remote Seed
 
+CREATE TABLE IF NOT EXISTS `catalog_items` (
+  `id` text PRIMARY KEY NOT NULL,
+  `name` text NOT NULL,
+  `description` text DEFAULT '',
+  `unit_price` real DEFAULT 0 NOT NULL,
+  `unit` text DEFAULT 'hrs' NOT NULL,
+  `default_tax_rate` real DEFAULT 0 NOT NULL,
+  `is_active` integer DEFAULT 1 NOT NULL,
+  `created_at` integer DEFAULT (unixepoch() * 1000) NOT NULL,
+  `updated_at` integer DEFAULT (unixepoch() * 1000) NOT NULL
+);
+
 INSERT OR IGNORE INTO users (id, name, email, email_verified, role, banned, created_at, updated_at)
 VALUES 
   ('usr_admin_01', 'Elena Vance (Admin)', 'admin@pocketcrm.dev', 1, 'admin', 0, unixepoch() * 1000, unixepoch() * 1000),
@@ -11,6 +23,14 @@ INSERT OR IGNORE INTO accounts (id, account_id, provider_id, user_id, password, 
 VALUES
   ('acc_admin_01', 'usr_admin_01', 'credential', 'usr_admin_01', '6e5bdf69dde0e8abfe437fde04e3164f:b9268875d38160e02edff056dcc2b684e5270e4dd8c0194683c1aaf3fb0a4fc44d429e93f315122bffd7536ae26e92c7806a4162656ababf920fc97a0d35c539', unixepoch() * 1000, unixepoch() * 1000),
   ('acc_member_01', 'usr_member_01', 'credential', 'usr_member_01', '6e5bdf69dde0e8abfe437fde04e3164f:b9268875d38160e02edff056dcc2b684e5270e4dd8c0194683c1aaf3fb0a4fc44d429e93f315122bffd7536ae26e92c7806a4162656ababf920fc97a0d35c539', unixepoch() * 1000, unixepoch() * 1000);
+
+-- Default Product & Service Catalog (Item Inventory)
+INSERT OR IGNORE INTO catalog_items (id, name, description, unit_price, unit, default_tax_rate, is_active, created_at, updated_at)
+VALUES
+  ('cat_prof_serv', 'Professional Services', 'Specialized enterprise engineering & consulting services', 150.00, 'hrs', 8.25, 1, unixepoch() * 1000, unixepoch() * 1000),
+  ('cat_app_dev', 'Application Development', 'Full-stack web and mobile application engineering', 175.00, 'hrs', 8.25, 1, unixepoch() * 1000, unixepoch() * 1000),
+  ('cat_cloud_arch', 'Cloud Architecture Consulting', 'Cloudflare Workers, D1, R2 edge infrastructure design', 200.00, 'hrs', 8.25, 1, unixepoch() * 1000, unixepoch() * 1000),
+  ('cat_sec_audit', 'Security Compliance Audit', 'Penetration testing, RBAC audit and Zero-Trust verification', 225.00, 'hrs', 8.25, 1, unixepoch() * 1000, unixepoch() * 1000);
 
 INSERT OR IGNORE INTO document_templates (id, name, is_default, logo_placement, company_header_text, payment_instructions, footer_legal_clause, styles, created_at, updated_at)
 VALUES (

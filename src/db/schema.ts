@@ -164,6 +164,7 @@ export const documentTemplates = sqliteTable('document_templates', {
   name: text('name').notNull(),
   isDefault: integer('is_default', { mode: 'boolean' }).notNull().default(false),
   logoR2Key: text('logo_r2_key'),
+  logoUrl: text('logo_url'),
   logoPlacement: text('logo_placement').$type<'left' | 'center' | 'right'>().notNull().default('left'),
   companyHeaderText: text('company_header_text').notNull().default('PocketCRM Solutions Inc.'),
   paymentInstructions: text('payment_instructions')
@@ -173,6 +174,26 @@ export const documentTemplates = sqliteTable('document_templates', {
     .notNull()
     .default('Late payments are subject to a 1.5% monthly finance charge. All deliverables remain property of the issuer until settled in full.'),
   styles: text('styles', { mode: 'json' }).$type<DocumentTemplateStyles>().notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`),
+});
+
+// ============================================================================
+// PRODUCT & SERVICE CATALOG (ITEM INVENTORY)
+// ============================================================================
+
+export const catalogItems = sqliteTable('catalog_items', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  description: text('description').default(''),
+  unitPrice: real('unit_price').notNull().default(0),
+  unit: text('unit').notNull().default('hrs'),
+  defaultTaxRate: real('default_tax_rate').notNull().default(0),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
     .notNull()
     .default(sql`(unixepoch() * 1000)`),

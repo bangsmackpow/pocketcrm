@@ -22,6 +22,12 @@ import {
   Users,
   Edit2,
   Lock,
+  Sun,
+  Moon,
+  Settings,
+  Package,
+  History,
+  Image as ImageIcon,
 } from 'lucide-react';
 import {
   Button,
@@ -46,8 +52,14 @@ import {
   updateManagedUser,
   resetManagedUserPassword,
   deleteManagedUser,
+  fetchCatalogItems,
+  createCatalogItem,
+  updateCatalogItem,
+  deleteCatalogItem,
+  uploadLogo,
   type AuthUser,
   type ManagedUser,
+  type CatalogItem,
   type ClientDto,
   type DocumentDto,
   type TemplateDto,
@@ -80,14 +92,25 @@ interface DashboardData {
 }
 
 export function App() {
+  // Theme state: defaults to 'light'
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    return localStorage.getItem('pocketcrm_theme') === 'dark' ? 'dark' : 'light';
+  });
+
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+
+  // Main navigation tab: 'dashboard' | 'clients' | 'estimates' | 'invoices' | 'admin'
   const [activeTab, setActiveTab] = useState('dashboard');
+  // Admin sub-tab: 'catalog' | 'templates' | 'users' | 'audits'
+  const [adminSubTab, setAdminSubTab] = useState('catalog');
+
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [clients, setClients] = useState<ClientDto[]>([]);
   const [estimates, setEstimates] = useState<DocumentDto[]>([]);
   const [invoices, setInvoices] = useState<DocumentDto[]>([]);
   const [templates, setTemplates] = useState<TemplateDto[]>([]);
+  const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
   const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [bannerMsg, setBannerMsg] = useState<{
@@ -95,7 +118,7 @@ export function App() {
     text: string;
   } | null>(null);
 
-  // Clean Login Form State (No registration, no credentials printed)
+  // Clean Login Form State
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
@@ -123,7 +146,17 @@ export function App() {
   const [resetPwUser, setResetPwUser] = useState<ManagedUser | null>(null);
   const [newPasswordInput, setNewPasswordInput] = useState('');
 
-  // New Client Modal State
+  // Catalog Item Modals & Forms State
+  const [itemModalOpen, setItemModalOpen] = useState(false);
+  const [newItemData, setNewItemData] = useState({
+    name: '',
+    description: '',
+    unitPrice: 150,
+    unit: 'hrs',
+    defaultTaxRate: 8.25,
+  });
+
+  // Client Creation Modal State
   const [clientModalOpen, setClientModalOpen] = useState(false);
   const [newClient, setNewClient] = useState({
     code: 'CLI-NEXUS',
@@ -162,14 +195,14 @@ export function App() {
   const [docNotes, setDocNotes] = useState('');
   const [docItems, setDocItems] = useState<LineItemCalculationInput[]>([
     {
-      name: 'Cloudflare Edge Consulting & D1 Optimization',
-      description: 'Architecture & migration sprint',
+      name: 'Professional Services',
+      description: 'Specialized enterprise consulting',
       quantity: 10,
       unit: 'hrs',
-      unitPrice: 175,
+      unitPrice: 150,
       discountType: 'percentage',
       discountValue: 0,
-      taxName: 'Sales Tax',
+      taxName: 'Tax',
       taxRate: 8.25,
       taxCompound: false,
       secondTaxRate: 0,
@@ -179,9 +212,24 @@ export function App() {
 
   const itemCsvInputRef = useRef<HTMLInputElement>(null);
   const clientCsvInputRef = useRef<HTMLInputElement>(null);
+  const logoInputRef = useRef<HTMLInputElement>(null);
 
   // Template Studio State
   const [editingTemplate, setEditingTemplate] = useState<TemplateDto | null>(null);
+
+  // Apply theme to HTML root element
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('pocketcrm_theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+  };
 
   const notify = (type: 'success' | 'error', text: string) => {
     setBannerMsg({ type, text });
@@ -213,6 +261,7 @@ export function App() {
         Promise<{ estimates: DocumentDto[] }>,
         Promise<{ invoices: DocumentDto[] }>,
         Promise<{ templates: TemplateDto[] }>,
+        Promise<CatalogItem[]>,
         Promise<ManagedUser[]>
       ] = [
         apiFetch<DashboardData>('/api/dashboard'),
@@ -220,16 +269,18 @@ export function App() {
         apiFetch<{ estimates: DocumentDto[] }>('/api/estimates'),
         apiFetch<{ invoices: DocumentDto[] }>('/api/invoices'),
         apiFetch<{ templates: TemplateDto[] }>('/api/templates'),
+        fetchCatalogItems(),
         isManagerOrAdmin ? fetchUsers() : Promise.resolve([]),
       ];
 
-      const [dashRes, cliRes, estRes, invRes, tplRes, usersRes] = await Promise.all(promises);
+      const [dashRes, cliRes, estRes, invRes, tplRes, itemsRes, usersRes] = await Promise.all(promises);
 
       setDashboard(dashRes);
       setClients(cliRes.clients || []);
       setEstimates(estRes.estimates || []);
       setInvoices(invRes.invoices || []);
       setTemplates(tplRes.templates || []);
+      setCatalogItems(itemsRes || []);
       setManagedUsers(usersRes || []);
 
       if (cliRes.clients?.length && !docClientId) {
@@ -337,6 +388,83 @@ export function App() {
     } catch (err) {
       notify('error', err instanceof Error ? err.message : 'Failed to delete user');
     }
+  };
+
+  // Catalog Item Actions
+  const handleCreateCatalogItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await createCatalogItem(newItemData);
+      setItemModalOpen(false);
+      setNewItemData({
+        name: '',
+        description: '',
+        unitPrice: 150,
+        unit: 'hrs',
+        defaultTaxRate: 8.25,
+      });
+      notify('success', `Catalog item "${newItemData.name}" created.`);
+      await refreshWorkspace();
+    } catch (err) {
+      notify('error', err instanceof Error ? err.message : 'Failed to create catalog item');
+    }
+  };
+
+  const handleDeleteCatalogItem = async (id: string, name: string) => {
+    if (!confirm(`Delete catalog item "${name}"?`)) return;
+    try {
+      await deleteCatalogItem(id);
+      notify('success', `Item "${name}" removed from catalog.`);
+      await refreshWorkspace();
+    } catch (err) {
+      notify('error', err instanceof Error ? err.message : 'Failed to delete item');
+    }
+  };
+
+  // Add Item from Catalog to Document Line Items
+  const handleAddFromCatalog = (item: CatalogItem) => {
+    setDocItems([
+      ...docItems,
+      {
+        name: item.name,
+        description: item.description,
+        quantity: 1,
+        unit: item.unit,
+        unitPrice: item.unitPrice,
+        discountType: 'percentage',
+        discountValue: 0,
+        taxName: 'Tax',
+        taxRate: item.defaultTaxRate,
+        taxCompound: false,
+        secondTaxRate: 0,
+        secondTaxCompound: false,
+      },
+    ]);
+    notify('success', `Added "${item.name}" from catalog ($${item.unitPrice.toFixed(2)}/${item.unit}).`);
+  };
+
+  // Logo Upload Handler
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editingTemplate) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const dataUrl = evt.target?.result as string;
+      try {
+        const logoUrl = await uploadLogo(editingTemplate.id, dataUrl, file.name);
+        setEditingTemplate({
+          ...editingTemplate,
+          logoUrl,
+        });
+        notify('success', 'Logo uploaded successfully and applied to document template.');
+        await refreshWorkspace();
+      } catch (err) {
+        notify('error', err instanceof Error ? err.message : 'Logo upload failed');
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   // Client Creation
@@ -464,16 +592,6 @@ export function App() {
           secondTaxRate: 0,
           secondTaxCompound: false,
         });
-
-        // Optional document header detection if present in first row
-        const docNum = getVal(row, 'document number', 'document_number');
-        if (docNum && typeof docNum === 'string') setDocNumber(docNum);
-        const issue = getVal(row, 'issue date', 'issue_date');
-        if (issue && typeof issue === 'string') setDocIssueDate(issue);
-        const due = getVal(row, 'due date', 'due_date');
-        if (due && typeof due === 'string') setDocDueDate(due);
-        const curr = getVal(row, 'currency');
-        if (curr && typeof curr === 'string') setDocCurrency(curr.toUpperCase());
       }
 
       if (importedItems.length > 0) {
@@ -490,8 +608,8 @@ export function App() {
   const downloadItemsTemplate = () => {
     const csvContent =
       'Item Name,Description,Quantity,Unit,Unit Price,Tax Rate,Compound Tax\n' +
-      'Cloudflare Workers Edge Engineering,Dedicated D1 + R2 infrastructure,40,hrs,150.00,8.25,false\n' +
-      'Zero-Trust Security Audit,Penetration testing & endpoint hardening,10,hrs,200.00,8.25,false';
+      'Application Development,Full-stack edge application engineering,40,hrs,175.00,8.25,false\n' +
+      'Professional Services,Architecture review and systems integration,10,hrs,150.00,8.25,false';
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -545,7 +663,7 @@ export function App() {
       setDocModalOpen(false);
       notify(
         'success',
-        `${docFormType === 'estimate' ? 'Estimate' : 'Invoice'} ${docNumber} created via atomic D1 batch.`
+        `${docFormType === 'estimate' ? 'Estimate' : 'Invoice'} ${docNumber} created.`
       );
       await refreshWorkspace();
     } catch (err) {
@@ -620,7 +738,7 @@ export function App() {
         method: 'PUT',
         body: JSON.stringify(editingTemplate),
       });
-      notify('success', `Updated template "${editingTemplate.name}" (Admin RBAC verified).`);
+      notify('success', `Updated template "${editingTemplate.name}".`);
       await refreshWorkspace();
     } catch (err) {
       notify('error', err instanceof Error ? err.message : 'Failed to update template');
@@ -630,36 +748,54 @@ export function App() {
   // 1. Loading State
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="flex items-center gap-3 text-slate-400">
-          <RefreshCw className="w-5 h-5 animate-spin text-blue-500" />
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center">
+        <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400">
+          <RefreshCw className="w-5 h-5 animate-spin text-blue-600" />
           <span>Connecting to PocketCRM Secure Edge...</span>
         </div>
       </div>
     );
   }
 
-  // 2. Unauthenticated State: Clean Login Screen (No public registration, no credentials printed)
+  // 2. Unauthenticated State: Clean Login Screen (Default Light Mode / Dark Toggle)
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center px-4 py-12">
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col justify-center items-center px-4 py-12 transition-colors">
+        <div className="absolute top-4 right-4">
+          <button
+            onClick={toggleTheme}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 shadow-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+            title="Toggle color theme"
+          >
+            {theme === 'light' ? (
+              <>
+                <Moon className="w-3.5 h-3.5 text-slate-600" /> Dark
+              </>
+            ) : (
+              <>
+                <Sun className="w-3.5 h-3.5 text-amber-400" /> Light
+              </>
+            )}
+          </button>
+        </div>
+
         <div className="w-full max-w-md">
           <div className="text-center mb-8">
             <div className="inline-flex h-12 w-12 rounded-2xl bg-blue-600 items-center justify-center font-black text-white text-xl shadow-lg shadow-blue-600/30 mb-3">
               P
             </div>
-            <h1 className="text-2xl font-bold tracking-tight text-white">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
               PocketCRM Edge
             </h1>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               Sign in to access your CRM, Quoting & Invoicing workspace
             </p>
           </div>
 
-          <Card className="p-6 border-slate-800 bg-slate-900/90 shadow-2xl">
+          <Card className="p-6">
             {authError && (
-              <div className="mb-4 flex items-center gap-2 rounded-lg border border-rose-500/40 bg-rose-950/60 p-3 text-xs text-rose-200">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+              <div className="mb-4 flex items-center gap-2 rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/60 dark:text-rose-200">
+                <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
                 <span>{authError}</span>
               </div>
             )}
@@ -688,7 +824,7 @@ export function App() {
                     autoComplete="current-password"
                     required
                   />
-                  <KeyRound className="w-4 h-4 text-slate-500 absolute right-3 top-2.5" />
+                  <KeyRound className="w-4 h-4 text-slate-400 absolute right-3 top-2.5" />
                 </div>
               </div>
 
@@ -698,11 +834,7 @@ export function App() {
                 className="w-full"
                 disabled={authSubmitting}
               >
-                {authSubmitting ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                ) : (
-                  'Sign In'
-                )}
+                {authSubmitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Sign In'}
               </Button>
             </form>
           </Card>
@@ -713,38 +845,54 @@ export function App() {
 
   const isManagerOrAdmin = currentUser.role === 'admin' || currentUser.role === 'member';
 
-  // 3. Authenticated State: Full Workspace with User Manager
+  // 3. Authenticated State: Clean, Streamlined Workspace
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors">
       {/* Top Header */}
-      <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
+      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 dark:border-slate-800/80 dark:bg-slate-950/90 backdrop-blur-md">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 rounded-xl bg-blue-600 flex items-center justify-center font-black text-white shadow-md shadow-blue-600/30">
               P
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-bold text-base tracking-tight text-white">
+                <span className="font-bold text-base tracking-tight text-slate-900 dark:text-white">
                   PocketCRM
                 </span>
-                <span className="rounded-md bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-400">
-                  Cloudflare Workers + D1 + R2
+                <span className="rounded-md bg-blue-50 border border-blue-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-700 dark:bg-blue-500/10 dark:border-blue-500/30 dark:text-blue-400">
+                  Cloudflare Edge
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
-                Edge CRM, Quoting & Invoicing Engine
-              </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Theme Toggle (Light / Dark) */}
+            <button
+              onClick={toggleTheme}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 cursor-pointer"
+              title="Toggle Light/Dark Theme"
+            >
+              {theme === 'light' ? (
+                <>
+                  <Moon className="w-3.5 h-3.5 text-slate-700" />
+                  <span className="hidden sm:inline">Dark</span>
+                </>
+              ) : (
+                <>
+                  <Sun className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="hidden sm:inline">Light</span>
+                </>
+              )}
+            </button>
+
             {/* Authenticated User Pill */}
-            <div className="flex items-center gap-2.5 rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+            <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-100 px-3 py-1.5 dark:border-slate-800 dark:bg-slate-900">
+              <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
               <div className="text-left text-xs">
-                <span className="font-semibold text-white">{currentUser.name}</span>
-                <span className="ml-1.5 rounded bg-blue-900/60 text-blue-300 text-[10px] px-1.5 py-0.5 font-bold uppercase">
+                <span className="font-semibold text-slate-800 dark:text-white">{currentUser.name}</span>
+                <span className="ml-1.5 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300 text-[10px] px-1.5 py-0.5 font-bold uppercase">
                   {currentUser.role}
                 </span>
               </div>
@@ -757,7 +905,6 @@ export function App() {
               title="Refresh Workspace"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-              Sync
             </Button>
 
             <Button
@@ -766,7 +913,7 @@ export function App() {
               onClick={() => void handleSignOut()}
               title="Sign Out"
             >
-              <LogOut className="w-3.5 h-3.5 text-slate-400" />
+              <LogOut className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
               Sign Out
             </Button>
           </div>
@@ -779,15 +926,15 @@ export function App() {
           <div
             className={`flex items-center justify-between rounded-xl border px-4 py-3 text-sm ${
               bannerMsg.type === 'success'
-                ? 'border-emerald-500/40 bg-emerald-950/60 text-emerald-200'
-                : 'border-rose-500/40 bg-rose-950/60 text-rose-200'
+                ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-500/40 dark:bg-emerald-950/60 dark:text-emerald-200'
+                : 'border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/60 dark:text-rose-200'
             }`}
           >
             <div className="flex items-center gap-2">
               {bannerMsg.type === 'success' ? (
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
               ) : (
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
               )}
               <span>{bannerMsg.text}</span>
             </div>
@@ -801,7 +948,7 @@ export function App() {
         </div>
       )}
 
-      {/* Main Workspace Navigation */}
+      {/* Main Workspace Navigation: Clean & Focused */}
       <main className="mx-auto max-w-7xl w-full flex-1 px-4 sm:px-6 py-6">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
@@ -823,15 +970,11 @@ export function App() {
                 Invoices ({invoices.length})
               </TabsTrigger>
               {isManagerOrAdmin && (
-                <TabsTrigger value="users">
-                  <Users className="w-3.5 h-3.5" />
-                  User Manager ({managedUsers.length})
+                <TabsTrigger value="admin">
+                  <Settings className="w-3.5 h-3.5" />
+                  Admin
                 </TabsTrigger>
               )}
-              <TabsTrigger value="templates">
-                <Palette className="w-3.5 h-3.5" />
-                Document Templates
-              </TabsTrigger>
             </TabsList>
 
             <div className="flex items-center gap-2">
@@ -854,50 +997,50 @@ export function App() {
           <TabsContent value="dashboard" className="space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <Card className="p-5">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   Total Invoiced Revenue
                 </div>
-                <div className="mt-2 text-2xl font-black text-white">
+                <div className="mt-2 text-2xl font-black text-slate-900 dark:text-white">
                   ${dashboard?.kpis.totalInvoiced.toLocaleString('en-US', { minimumFractionDigits: 2 }) ?? '0.00'}
                 </div>
-                <div className="mt-1 text-xs text-emerald-400">
+                <div className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
                   Collected: ${dashboard?.kpis.totalCollected.toLocaleString('en-US', { minimumFractionDigits: 2 }) ?? '0.00'}
                 </div>
               </Card>
 
               <Card className="p-5">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   Outstanding Receivables
                 </div>
-                <div className="mt-2 text-2xl font-black text-amber-400">
+                <div className="mt-2 text-2xl font-black text-amber-600 dark:text-amber-400">
                   ${dashboard?.kpis.totalOutstanding.toLocaleString('en-US', { minimumFractionDigits: 2 }) ?? '0.00'}
                 </div>
-                <div className="mt-1 text-xs text-rose-400">
+                <div className="mt-1 text-xs text-rose-600 dark:text-rose-400">
                   Overdue: ${dashboard?.kpis.overdueAmount.toLocaleString('en-US', { minimumFractionDigits: 2 }) ?? '0.00'}
                 </div>
               </Card>
 
               <Card className="p-5">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   Estimates / Quote Pipeline
                 </div>
-                <div className="mt-2 text-2xl font-black text-sky-400">
+                <div className="mt-2 text-2xl font-black text-sky-600 dark:text-sky-400">
                   ${dashboard?.kpis.openPipelineValue.toLocaleString('en-US', { minimumFractionDigits: 2 }) ?? '0.00'}
                 </div>
-                <div className="mt-1 text-xs text-slate-400">
+                <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                   {dashboard?.kpis.estimateCount ?? 0} active quotes
                 </div>
               </Card>
 
               <Card className="p-5">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   Active Enterprise Clients
                 </div>
-                <div className="mt-2 text-2xl font-black text-white">
+                <div className="mt-2 text-2xl font-black text-slate-900 dark:text-white">
                   {dashboard?.kpis.activeClients ?? 0}
                 </div>
-                <div className="mt-1 text-xs text-slate-400">
-                  Role: <strong className="text-blue-400 uppercase">{currentUser.role}</strong>
+                <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  Role: <strong className="text-blue-600 dark:text-blue-400 uppercase">{currentUser.role}</strong>
                 </div>
               </Card>
             </div>
@@ -905,14 +1048,14 @@ export function App() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <Card className="p-5 lg:col-span-2">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300">
+                  <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                     Recent Invoices & Quotes
                   </h2>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm">
                     <thead>
-                      <tr className="border-b border-slate-800 text-xs uppercase text-slate-400">
+                      <tr className="border-b border-slate-200 dark:border-slate-800 text-xs uppercase text-slate-500 dark:text-slate-400">
                         <th className="py-2.5 px-3">Number</th>
                         <th className="py-2.5 px-3">Type</th>
                         <th className="py-2.5 px-3">Client</th>
@@ -920,16 +1063,16 @@ export function App() {
                         <th className="py-2.5 px-3 text-right">Total</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800/60">
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                       {[...invoices, ...estimates].slice(0, 8).map((doc) => (
-                        <tr key={doc.id} className="hover:bg-slate-800/30">
-                          <td className="py-2.5 px-3 font-mono font-semibold text-blue-400">
+                        <tr key={doc.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                          <td className="py-2.5 px-3 font-mono font-semibold text-blue-600 dark:text-blue-400">
                             {doc.documentNumber}
                           </td>
-                          <td className="py-2.5 px-3 capitalize text-slate-300">
+                          <td className="py-2.5 px-3 capitalize text-slate-600 dark:text-slate-300">
                             {doc.type}
                           </td>
-                          <td className="py-2.5 px-3 text-slate-200">
+                          <td className="py-2.5 px-3 text-slate-800 dark:text-slate-200">
                             {doc.client?.companyName || doc.clientId}
                           </td>
                           <td className="py-2.5 px-3">
@@ -946,22 +1089,22 @@ export function App() {
               </Card>
 
               <Card className="p-5">
-                <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 mb-4">
+                <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-4">
                   Immutable Audit Trail (D1)
                 </h2>
                 <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
                   {dashboard?.recentAudits.map((aud) => (
                     <div
                       key={aud.id}
-                      className="rounded-lg border border-slate-800/80 bg-slate-950/60 p-3 text-xs"
+                      className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 text-xs dark:border-slate-800/80 dark:bg-slate-950/60"
                     >
-                      <div className="flex items-center justify-between font-semibold text-blue-400">
+                      <div className="flex items-center justify-between font-semibold text-blue-600 dark:text-blue-400">
                         <span>{aud.action}</span>
                         <span className="text-[10px] text-slate-500 uppercase">
                           {aud.entityType}
                         </span>
                       </div>
-                      <div className="text-slate-400 mt-1 truncate">
+                      <div className="text-slate-500 dark:text-slate-400 mt-1 truncate">
                         Actor: {aud.actorEmail || 'system'} • ID: {aud.entityId}
                       </div>
                     </div>
@@ -976,10 +1119,10 @@ export function App() {
             <Card className="p-5">
               <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
                 <div>
-                  <h2 className="text-base font-bold text-white">
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white">
                     CRM Client Directory
                   </h2>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     Manage customer contacts, billing addresses, tax IDs, and payment terms.
                   </p>
                 </div>
@@ -1004,7 +1147,7 @@ export function App() {
                       setClientImportModalOpen(true);
                     }}
                   >
-                    <Upload className="w-3.5 h-3.5 text-blue-400" />
+                    <Upload className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                     Import Clients CSV
                   </Button>
 
@@ -1089,7 +1232,7 @@ export function App() {
                             />
                           </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-800">
+                        <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-200 dark:border-slate-800">
                           <div className="col-span-2">
                             <Label>Billing Street Address</Label>
                             <Input
@@ -1147,7 +1290,7 @@ export function App() {
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
-                    <tr className="border-b border-slate-800 text-xs uppercase text-slate-400">
+                    <tr className="border-b border-slate-200 dark:border-slate-800 text-xs uppercase text-slate-500 dark:text-slate-400">
                       <th className="py-3 px-3">Code</th>
                       <th className="py-3 px-3">Company</th>
                       <th className="py-3 px-3">Primary Contact</th>
@@ -1156,26 +1299,26 @@ export function App() {
                       <th className="py-3 px-3">Billing City</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/60">
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                     {clients.map((cli) => (
-                      <tr key={cli.id} className="hover:bg-slate-800/30">
-                        <td className="py-3 px-3 font-mono text-xs font-bold text-blue-400">
+                      <tr key={cli.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                        <td className="py-3 px-3 font-mono text-xs font-bold text-blue-600 dark:text-blue-400">
                           {cli.code}
                         </td>
-                        <td className="py-3 px-3 font-semibold text-white">
+                        <td className="py-3 px-3 font-semibold text-slate-900 dark:text-white">
                           {cli.companyName}
                         </td>
-                        <td className="py-3 px-3 text-slate-300">
+                        <td className="py-3 px-3 text-slate-700 dark:text-slate-300">
                           <div>{cli.contactName}</div>
                           <div className="text-xs text-slate-500">{cli.email}</div>
                         </td>
-                        <td className="py-3 px-3 font-mono text-xs text-slate-300">
+                        <td className="py-3 px-3 font-mono text-xs text-slate-600 dark:text-slate-300">
                           {cli.taxIdentifier || '—'}
                         </td>
-                        <td className="py-3 px-3 text-xs text-slate-300">
+                        <td className="py-3 px-3 text-xs text-slate-600 dark:text-slate-300">
                           Net {cli.paymentTermsDays}d ({cli.currency})
                         </td>
-                        <td className="py-3 px-3 text-xs text-slate-400">
+                        <td className="py-3 px-3 text-xs text-slate-500 dark:text-slate-400">
                           {cli.billingAddress?.city}, {cli.billingAddress?.state}{' '}
                           {cli.billingAddress?.country}
                         </td>
@@ -1224,16 +1367,16 @@ export function App() {
                       value={clientCsvText}
                       onChange={(e) => setClientCsvText(e.target.value)}
                       placeholder="Paste CSV rows here or choose a file above..."
-                      className="w-full rounded-xl border border-slate-800 bg-slate-950 p-3 font-mono text-xs text-slate-200 focus:border-blue-500 focus:outline-none"
+                      className="w-full rounded-xl border border-slate-300 bg-white p-3 font-mono text-xs text-slate-800 focus:border-blue-500 focus:outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200"
                     />
                   </div>
 
                   {clientImportErrors.length > 0 && (
-                    <div className="rounded-xl border border-rose-500/40 bg-rose-950/30 p-3">
-                      <h4 className="text-xs font-bold uppercase text-rose-300 mb-1">
+                    <div className="rounded-xl border border-rose-300 bg-rose-50 p-3 dark:border-rose-500/40 dark:bg-rose-950/30">
+                      <h4 className="text-xs font-bold uppercase text-rose-800 dark:text-rose-300 mb-1">
                         Validation Errors ({clientImportErrors.length})
                       </h4>
-                      <div className="space-y-1 text-xs text-rose-200 font-mono max-h-36 overflow-y-auto">
+                      <div className="space-y-1 text-xs text-rose-700 dark:text-rose-200 font-mono max-h-36 overflow-y-auto">
                         {clientImportErrors.map((err, i) => (
                           <div key={i}>
                             [Row {err.rowNumber}] Field &quot;{err.field}&quot;: {err.message}
@@ -1267,10 +1410,10 @@ export function App() {
             <Card className="p-5">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-base font-bold text-white">
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white">
                     Estimates & Quotes Workflow
                   </h2>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     State Transitions: Draft → Sent → Approved / Rejected → Converted to Invoice
                   </p>
                 </div>
@@ -1279,7 +1422,7 @@ export function App() {
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
-                    <tr className="border-b border-slate-800 text-xs uppercase text-slate-400">
+                    <tr className="border-b border-slate-200 dark:border-slate-800 text-xs uppercase text-slate-500 dark:text-slate-400">
                       <th className="py-3 px-3">Estimate #</th>
                       <th className="py-3 px-3">Client</th>
                       <th className="py-3 px-3">Issue / Expiry</th>
@@ -1288,27 +1431,27 @@ export function App() {
                       <th className="py-3 px-3 text-right">Workflow Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/60">
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                     {estimates.map((est) => (
-                      <tr key={est.id} className="hover:bg-slate-800/30">
-                        <td className="py-3 px-3 font-mono font-bold text-blue-400">
+                      <tr key={est.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                        <td className="py-3 px-3 font-mono font-bold text-blue-600 dark:text-blue-400">
                           {est.documentNumber}
                         </td>
                         <td className="py-3 px-3">
-                          <div className="font-medium text-white">
+                          <div className="font-medium text-slate-900 dark:text-white">
                             {est.client?.companyName}
                           </div>
                           <div className="text-xs text-slate-500">
                             {est.client?.code}
                           </div>
                         </td>
-                        <td className="py-3 px-3 text-xs text-slate-300">
+                        <td className="py-3 px-3 text-xs text-slate-600 dark:text-slate-300">
                           {est.issueDate} → {est.dueDate}
                         </td>
                         <td className="py-3 px-3">
                           <StatusBadge status={est.status} />
                         </td>
-                        <td className="py-3 px-3 text-right font-bold text-white">
+                        <td className="py-3 px-3 text-right font-bold text-slate-900 dark:text-white">
                           {est.currency} ${est.total.toFixed(2)}
                         </td>
                         <td className="py-3 px-3 text-right">
@@ -1360,7 +1503,7 @@ export function App() {
                               href={`/api/estimates/${est.id}/pdf?format=html`}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-800"
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
                             >
                               <ExternalLink className="w-3 h-3" />
                               Preview
@@ -1369,7 +1512,7 @@ export function App() {
                               href={`/api/estimates/${est.id}/pdf`}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-blue-400 hover:bg-slate-800"
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-xs text-blue-600 dark:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800"
                             >
                               <Download className="w-3 h-3" />
                               PDF (R2)
@@ -1389,10 +1532,10 @@ export function App() {
             <Card className="p-5">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-base font-bold text-white">
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white">
                     Invoices & Receivables Workflow
                   </h2>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     State Transitions: Draft → Sent → Partial / Paid → Overdue → Cancelled
                   </p>
                 </div>
@@ -1401,7 +1544,7 @@ export function App() {
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
-                    <tr className="border-b border-slate-800 text-xs uppercase text-slate-400">
+                    <tr className="border-b border-slate-200 dark:border-slate-800 text-xs uppercase text-slate-500 dark:text-slate-400">
                       <th className="py-3 px-3">Invoice #</th>
                       <th className="py-3 px-3">Client</th>
                       <th className="py-3 px-3">Due Date</th>
@@ -1411,30 +1554,30 @@ export function App() {
                       <th className="py-3 px-3 text-right">Workflow Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/60">
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                     {invoices.map((inv) => (
-                      <tr key={inv.id} className="hover:bg-slate-800/30">
-                        <td className="py-3 px-3 font-mono font-bold text-blue-400">
+                      <tr key={inv.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                        <td className="py-3 px-3 font-mono font-bold text-blue-600 dark:text-blue-400">
                           {inv.documentNumber}
                         </td>
                         <td className="py-3 px-3">
-                          <div className="font-medium text-white">
+                          <div className="font-medium text-slate-900 dark:text-white">
                             {inv.client?.companyName}
                           </div>
                           <div className="text-xs text-slate-500">
                             {inv.client?.code}
                           </div>
                         </td>
-                        <td className="py-3 px-3 text-xs text-slate-300">
+                        <td className="py-3 px-3 text-xs text-slate-600 dark:text-slate-300">
                           {inv.dueDate}
                         </td>
                         <td className="py-3 px-3">
                           <StatusBadge status={inv.status} />
                         </td>
-                        <td className="py-3 px-3 text-right font-semibold text-white">
+                        <td className="py-3 px-3 text-right font-semibold text-slate-900 dark:text-white">
                           {inv.currency} ${inv.total.toFixed(2)}
                         </td>
-                        <td className="py-3 px-3 text-right font-bold text-amber-400">
+                        <td className="py-3 px-3 text-right font-bold text-amber-600 dark:text-amber-400">
                           {inv.currency} ${inv.amountDue.toFixed(2)}
                         </td>
                         <td className="py-3 px-3 text-right">
@@ -1486,7 +1629,7 @@ export function App() {
                               href={`/api/invoices/${inv.id}/pdf?format=html`}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-800"
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
                             >
                               <ExternalLink className="w-3 h-3" />
                               Preview
@@ -1495,7 +1638,7 @@ export function App() {
                               href={`/api/invoices/${inv.id}/pdf`}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-blue-400 hover:bg-slate-800"
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-xs text-blue-600 dark:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800"
                             >
                               <Download className="w-3 h-3" />
                               PDF (R2)
@@ -1510,527 +1653,838 @@ export function App() {
             </Card>
           </TabsContent>
 
-          {/* 5. USER MANAGER TAB (Admin & Member/Manager Access) */}
+          {/* 5. CONSOLIDATED ADMIN & SETTINGS AREA */}
           {isManagerOrAdmin && (
-            <TabsContent value="users">
-              <Card className="p-5">
-                <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <TabsContent value="admin" className="space-y-6">
+              {/* Clean Admin Sub-navigation Header */}
+              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <Settings className="w-5 h-5 text-blue-600 dark:text-blue-400" />
                   <div>
-                    <h2 className="text-base font-bold text-white">
-                      Team & User Manager
+                    <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                      Administration & Settings
                     </h2>
-                    <p className="text-xs text-slate-400">
-                      Manage team accounts, edit user profiles, assign RBAC roles, and reset credentials.
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Configure services catalog, document branding, team access, and view audit history.
                     </p>
                   </div>
-
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={() => {
-                      setNewUserData({ name: '', email: '', password: '', role: 'member' });
-                      setNewUserModalOpen(true);
-                    }}
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    New User
-                  </Button>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-800 text-xs uppercase text-slate-400">
-                        <th className="py-3 px-3">Name</th>
-                        <th className="py-3 px-3">Email</th>
-                        <th className="py-3 px-3">Role</th>
-                        <th className="py-3 px-3">Status</th>
-                        <th className="py-3 px-3 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60">
-                      {managedUsers.map((user) => (
-                        <tr key={user.id} className="hover:bg-slate-800/30">
-                          <td className="py-3 px-3 font-semibold text-white">
-                            {user.name}
-                            {user.id === currentUser.id && (
-                              <span className="ml-2 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
-                                You
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3 px-3 text-slate-300 font-mono text-xs">
-                            {user.email}
-                          </td>
-                          <td className="py-3 px-3">
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase bg-blue-950 text-blue-300 border border-blue-800/60">
-                              {user.role}
-                            </span>
-                          </td>
-                          <td className="py-3 px-3">
-                            <span
-                              className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold uppercase ${
-                                user.banned
-                                  ? 'bg-rose-950 text-rose-300 border border-rose-800/60'
-                                  : 'bg-emerald-950 text-emerald-300 border border-emerald-800/60'
-                              }`}
-                            >
-                              {user.banned ? 'Suspended' : 'Active'}
-                            </span>
-                          </td>
-                          <td className="py-3 px-3 text-right">
-                            <div className="inline-flex items-center gap-1.5 justify-end">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setEditingUser(user);
-                                  setEditUserData({
-                                    name: user.name,
-                                    email: user.email,
-                                    role: user.role,
-                                    banned: Boolean(user.banned),
-                                  });
-                                  setEditUserModalOpen(true);
-                                }}
-                                title="Edit user info"
-                              >
-                                <Edit2 className="w-3 h-3" />
-                                Edit
-                              </Button>
+                <div className="flex rounded-lg bg-slate-200/80 dark:bg-slate-900 p-1 border border-slate-300/80 dark:border-slate-800 text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setAdminSubTab('catalog')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all cursor-pointer ${
+                      adminSubTab === 'catalog'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <Package className="w-3.5 h-3.5" />
+                    Product Catalog ({catalogItems.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAdminSubTab('templates')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all cursor-pointer ${
+                      adminSubTab === 'templates'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <Palette className="w-3.5 h-3.5" />
+                    Templates & Logo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAdminSubTab('users')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all cursor-pointer ${
+                      adminSubTab === 'users'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <Users className="w-3.5 h-3.5" />
+                    Team & Users ({managedUsers.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAdminSubTab('audits')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all cursor-pointer ${
+                      adminSubTab === 'audits'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <History className="w-3.5 h-3.5" />
+                    Audit Logs
+                  </button>
+                </div>
+              </div>
 
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                onClick={() => {
-                                  setResetPwUser(user);
-                                  setNewPasswordInput('');
-                                  setResetPwModalOpen(true);
-                                }}
-                                title="Reset user password"
-                              >
-                                <Lock className="w-3 h-3 text-amber-400" />
-                                Reset PW
-                              </Button>
+              {/* Sub-view A: Product & Service Catalog (Item Inventory) */}
+              {adminSubTab === 'catalog' && (
+                <Card className="p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                        Product & Service Catalog (Item Inventory)
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Define default services, rates, and units for instant one-click insertion into quotes and invoices.
+                      </p>
+                    </div>
 
-                              {currentUser.role === 'admin' && user.id !== currentUser.id && (
-                                <button
-                                  type="button"
-                                  onClick={() => void handleDeleteUser(user)}
-                                  className="text-rose-400 hover:text-rose-300 p-1.5 rounded hover:bg-slate-800 transition-colors"
-                                  title="Delete user"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                            </div>
-                          </td>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => setItemModalOpen(true)}
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Add Catalog Item
+                    </Button>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 dark:border-slate-800 text-xs uppercase text-slate-500 dark:text-slate-400">
+                          <th className="py-3 px-3">Service / Product Name</th>
+                          <th className="py-3 px-3">Description</th>
+                          <th className="py-3 px-3">Default Rate</th>
+                          <th className="py-3 px-3">Unit</th>
+                          <th className="py-3 px-3">Default Tax %</th>
+                          <th className="py-3 px-3 text-right">Actions</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                        {catalogItems.map((item) => (
+                          <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                            <td className="py-3 px-3 font-semibold text-slate-900 dark:text-white">
+                              {item.name}
+                            </td>
+                            <td className="py-3 px-3 text-xs text-slate-500 dark:text-slate-400 max-w-xs truncate">
+                              {item.description || '—'}
+                            </td>
+                            <td className="py-3 px-3 font-bold text-slate-900 dark:text-white">
+                              ${item.unitPrice.toFixed(2)}
+                            </td>
+                            <td className="py-3 px-3 text-xs text-slate-600 dark:text-slate-300">
+                              {item.unit}
+                            </td>
+                            <td className="py-3 px-3 text-xs text-slate-600 dark:text-slate-300">
+                              {item.defaultTaxRate}%
+                            </td>
+                            <td className="py-3 px-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => void handleDeleteCatalogItem(item.id, item.name)}
+                                className="text-rose-600 dark:text-rose-400 hover:text-rose-700 p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                                title="Delete item"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
 
-              {/* Create User Modal */}
-              <Dialog open={newUserModalOpen} onOpenChange={setNewUserModalOpen}>
-                <DialogModal
-                  title="Create New User"
-                  description="Add a team member account and set their role and initial password."
-                >
-                  <form onSubmit={handleCreateUser} className="space-y-4">
-                    <div>
-                      <Label>Full Name</Label>
-                      <Input
-                        type="text"
-                        value={newUserData.name}
-                        onChange={(e) =>
-                          setNewUserData({ ...newUserData, name: e.target.value })
-                        }
-                        placeholder="Sarah Connor"
-                        required
-                      />
-                    </div>
+                  {/* Add Catalog Item Modal */}
+                  <Dialog open={itemModalOpen} onOpenChange={setItemModalOpen}>
+                    <DialogModal
+                      title="Add Service / Product to Catalog"
+                      description="Create a standard item with a default price to speed up quote and invoice generation."
+                    >
+                      <form onSubmit={handleCreateCatalogItem} className="space-y-4">
+                        <div>
+                          <Label>Service / Item Name</Label>
+                          <Input
+                            value={newItemData.name}
+                            onChange={(e) =>
+                              setNewItemData({ ...newItemData, name: e.target.value })
+                            }
+                            placeholder="Application Development"
+                            required
+                          />
+                        </div>
 
-                    <div>
-                      <Label>Email Address</Label>
-                      <Input
-                        type="email"
-                        value={newUserData.email}
-                        onChange={(e) =>
-                          setNewUserData({ ...newUserData, email: e.target.value })
-                        }
-                        placeholder="sarah@company.com"
-                        required
-                      />
-                    </div>
+                        <div>
+                          <Label>Description</Label>
+                          <Input
+                            value={newItemData.description}
+                            onChange={(e) =>
+                              setNewItemData({ ...newItemData, description: e.target.value })
+                            }
+                            placeholder="Full-stack edge application engineering"
+                          />
+                        </div>
 
-                    <div>
-                      <Label>Role</Label>
-                      <select
-                        value={newUserData.role}
-                        onChange={(e) =>
-                          setNewUserData({
-                            ...newUserData,
-                            role: e.target.value as 'admin' | 'member' | 'viewer',
-                          })
-                        }
-                        className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
-                      >
-                        <option value="admin">Admin (Full Access & Templates)</option>
-                        <option value="member">Member / Manager (Manage Docs & Clients)</option>
-                        <option value="viewer">Viewer (Read-Only & Auditing)</option>
-                      </select>
-                    </div>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div>
+                            <Label>Unit Price ($)</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={newItemData.unitPrice}
+                              onChange={(e) =>
+                                setNewItemData({
+                                  ...newItemData,
+                                  unitPrice: Number(e.target.value),
+                                })
+                              }
+                              required
+                            />
+                          </div>
 
-                    <div>
-                      <Label>Initial Password (min 8 characters)</Label>
-                      <Input
-                        type="password"
-                        value={newUserData.password}
-                        onChange={(e) =>
-                          setNewUserData({ ...newUserData, password: e.target.value })
-                        }
-                        placeholder="••••••••••••"
-                        minLength={8}
-                        required
-                      />
-                    </div>
+                          <div>
+                            <Label>Unit</Label>
+                            <Input
+                              value={newItemData.unit}
+                              onChange={(e) =>
+                                setNewItemData({ ...newItemData, unit: e.target.value })
+                              }
+                              placeholder="hrs, units, fixed"
+                              required
+                            />
+                          </div>
 
-                    <div className="flex justify-end gap-2 pt-2">
-                      <Button type="submit" variant="primary">
-                        Create Account
-                      </Button>
-                    </div>
-                  </form>
-                </DialogModal>
-              </Dialog>
+                          <div>
+                            <Label>Default Tax %</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={newItemData.defaultTaxRate}
+                              onChange={(e) =>
+                                setNewItemData({
+                                  ...newItemData,
+                                  defaultTaxRate: Number(e.target.value),
+                                })
+                              }
+                            />
+                          </div>
+                        </div>
 
-              {/* Edit User Modal */}
-              <Dialog open={editUserModalOpen} onOpenChange={setEditUserModalOpen}>
-                <DialogModal
-                  title="Edit User Profile"
-                  description={`Update details and permissions for ${editingUser?.name || 'user'}.`}
-                >
-                  <form onSubmit={handleUpdateUser} className="space-y-4">
-                    <div>
-                      <Label>Full Name</Label>
-                      <Input
-                        type="text"
-                        value={editUserData.name}
-                        onChange={(e) =>
-                          setEditUserData({ ...editUserData, name: e.target.value })
-                        }
-                        required
-                      />
-                    </div>
-
-                    <div>
-                      <Label>Email Address</Label>
-                      <Input
-                        type="email"
-                        value={editUserData.email}
-                        onChange={(e) =>
-                          setEditUserData({ ...editUserData, email: e.target.value })
-                        }
-                        required
-                      />
-                    </div>
-
-                    <div>
-                      <Label>Role</Label>
-                      <select
-                        value={editUserData.role}
-                        onChange={(e) =>
-                          setEditUserData({
-                            ...editUserData,
-                            role: e.target.value as 'admin' | 'member' | 'viewer',
-                          })
-                        }
-                        className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
-                      >
-                        <option value="admin">Admin (Full Access & Templates)</option>
-                        <option value="member">Member / Manager (Manage Docs & Clients)</option>
-                        <option value="viewer">Viewer (Read-Only & Auditing)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer pt-1">
-                        <input
-                          type="checkbox"
-                          checked={editUserData.banned}
-                          onChange={(e) =>
-                            setEditUserData({ ...editUserData, banned: e.target.checked })
-                          }
-                        />
-                        Suspend / Ban this user account
-                      </label>
-                    </div>
-
-                    <div className="flex justify-end gap-2 pt-2">
-                      <Button type="submit" variant="primary">
-                        Save Changes
-                      </Button>
-                    </div>
-                  </form>
-                </DialogModal>
-              </Dialog>
-
-              {/* Reset Password Modal */}
-              <Dialog open={resetPwModalOpen} onOpenChange={setResetPwModalOpen}>
-                <DialogModal
-                  title="Reset User Password"
-                  description={`Set a new password for ${resetPwUser?.email}.`}
-                >
-                  <form onSubmit={handleResetPassword} className="space-y-4">
-                    <div>
-                      <Label>New Password (min 8 characters)</Label>
-                      <Input
-                        type="password"
-                        value={newPasswordInput}
-                        onChange={(e) => setNewPasswordInput(e.target.value)}
-                        placeholder="••••••••••••"
-                        minLength={8}
-                        required
-                      />
-                    </div>
-
-                    <div className="flex justify-end gap-2 pt-2">
-                      <Button type="submit" variant="primary">
-                        Update Password
-                      </Button>
-                    </div>
-                  </form>
-                </DialogModal>
-              </Dialog>
-            </TabsContent>
-          )}
-
-          {/* 6. CONFIGURABLE DOCUMENT TEMPLATES TAB */}
-          <TabsContent value="templates">
-            {editingTemplate && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <Card className="p-6">
-                  <h2 className="text-base font-bold text-white mb-1">
-                    Configurable Document Template Studio
-                  </h2>
-                  <p className="text-xs text-slate-400 mb-4">
-                    Customize CSS variables, logo placement, payment instructions, and legal footer clauses. (Requires Admin RBAC role to save)
-                  </p>
-
-                  <form onSubmit={handleSaveTemplate} className="space-y-4">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <Label>Template Name</Label>
-                        <Input
-                          value={editingTemplate.name}
-                          onChange={(e) =>
-                            setEditingTemplate({
-                              ...editingTemplate,
-                              name: e.target.value,
-                            })
-                          }
-                        />
-                      </div>
-                      <div>
-                        <Label>Logo Placement</Label>
-                        <select
-                          value={editingTemplate.logoPlacement}
-                          onChange={(e) =>
-                            setEditingTemplate({
-                              ...editingTemplate,
-                              logoPlacement: e.target.value as 'left' | 'center' | 'right',
-                            })
-                          }
-                          className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
-                        >
-                          <option value="left">Left Aligned</option>
-                          <option value="center">Centered</option>
-                          <option value="right">Right Aligned</option>
-                        </select>
-                      </div>
-                      <div>
-                        <Label>Primary Color (CSS Var)</Label>
-                        <Input
-                          type="color"
-                          value={editingTemplate.styles.primaryColor}
-                          onChange={(e) =>
-                            setEditingTemplate({
-                              ...editingTemplate,
-                              styles: {
-                                ...editingTemplate.styles,
-                                primaryColor: e.target.value,
-                              },
-                            })
-                          }
-                          className="h-10 p-1"
-                        />
-                      </div>
-                      <div>
-                        <Label>Accent Color (CSS Var)</Label>
-                        <Input
-                          type="color"
-                          value={editingTemplate.styles.accentColor}
-                          onChange={(e) =>
-                            setEditingTemplate({
-                              ...editingTemplate,
-                              styles: {
-                                ...editingTemplate.styles,
-                                accentColor: e.target.value,
-                              },
-                            })
-                          }
-                          className="h-10 p-1"
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <Label>Company Header Details</Label>
-                      <textarea
-                        rows={3}
-                        value={editingTemplate.companyHeaderText}
-                        onChange={(e) =>
-                          setEditingTemplate({
-                            ...editingTemplate,
-                            companyHeaderText: e.target.value,
-                          })
-                        }
-                        className="w-full rounded-lg border border-slate-800 bg-slate-900 p-2.5 text-xs text-white"
-                      />
-                    </div>
-
-                    <div>
-                      <Label>Payment Instructions</Label>
-                      <textarea
-                        rows={2}
-                        value={editingTemplate.paymentInstructions}
-                        onChange={(e) =>
-                          setEditingTemplate({
-                            ...editingTemplate,
-                            paymentInstructions: e.target.value,
-                          })
-                        }
-                        className="w-full rounded-lg border border-slate-800 bg-slate-900 p-2.5 text-xs text-white"
-                      />
-                    </div>
-
-                    <div>
-                      <Label>Footer Legal Clause</Label>
-                      <textarea
-                        rows={2}
-                        value={editingTemplate.footerLegalClause}
-                        onChange={(e) =>
-                          setEditingTemplate({
-                            ...editingTemplate,
-                            footerLegalClause: e.target.value,
-                          })
-                        }
-                        className="w-full rounded-lg border border-slate-800 bg-slate-900 p-2.5 text-xs text-white"
-                      />
-                    </div>
-
-                    <div className="flex justify-end">
-                      <Button type="submit" variant="primary">
-                        Save Template Configuration
-                      </Button>
-                    </div>
-                  </form>
+                        <div className="flex justify-end gap-2 pt-2">
+                          <Button type="submit" variant="primary">
+                            Save to Inventory
+                          </Button>
+                        </div>
+                      </form>
+                    </DialogModal>
+                  </Dialog>
                 </Card>
+              )}
 
-                {/* Live Styled Preview */}
-                <Card className="p-6 bg-white text-slate-900 overflow-hidden">
-                  <div
-                    style={{
-                      borderBottom: `2px solid ${editingTemplate.styles.tableBorderColor}`,
-                      background: editingTemplate.styles.headerBg,
-                      padding: '20px',
-                      borderRadius: '8px',
-                    }}
-                  >
+              {/* Sub-view B: Document Templates & Logo */}
+              {adminSubTab === 'templates' && editingTemplate && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <Card className="p-6">
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white mb-1">
+                      Document Branding & Logo Configuration
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
+                      Upload your company logo, set alignment, colors, payment instructions, and legal clauses.
+                    </p>
+
+                    <form onSubmit={handleSaveTemplate} className="space-y-4">
+                      {/* Logo Upload Section */}
+                      <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-800 p-4 bg-slate-50 dark:bg-slate-950">
+                        <Label>Company Logo (Quotes & Invoices)</Label>
+                        <div className="flex items-center gap-4 mt-2">
+                          {editingTemplate.logoUrl ? (
+                            <img
+                              src={editingTemplate.logoUrl}
+                              alt="Uploaded logo"
+                              className="h-12 w-auto max-w-[150px] object-contain border border-slate-200 dark:border-slate-800 rounded p-1 bg-white"
+                            />
+                          ) : (
+                            <div className="h-12 w-28 rounded border border-dashed border-slate-300 dark:border-slate-700 flex items-center justify-center text-[10px] text-slate-400">
+                              No Logo
+                            </div>
+                          )}
+
+                          <input
+                            type="file"
+                            ref={logoInputRef}
+                            onChange={handleLogoUpload}
+                            accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                            className="hidden"
+                          />
+
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => logoInputRef.current?.click()}
+                          >
+                            <ImageIcon className="w-3.5 h-3.5" />
+                            {editingTemplate.logoUrl ? 'Change Logo' : 'Upload Logo'}
+                          </Button>
+
+                          {editingTemplate.logoUrl && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setEditingTemplate({
+                                  ...editingTemplate,
+                                  logoUrl: null,
+                                })
+                              }
+                              className="text-xs text-rose-600 dark:text-rose-400 hover:underline"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label>Template Name</Label>
+                          <Input
+                            value={editingTemplate.name}
+                            onChange={(e) =>
+                              setEditingTemplate({
+                                ...editingTemplate,
+                                name: e.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                        <div>
+                          <Label>Logo Placement</Label>
+                          <select
+                            value={editingTemplate.logoPlacement}
+                            onChange={(e) =>
+                              setEditingTemplate({
+                                ...editingTemplate,
+                                logoPlacement: e.target.value as 'left' | 'center' | 'right',
+                              })
+                            }
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                          >
+                            <option value="left">Left Aligned</option>
+                            <option value="center">Centered</option>
+                            <option value="right">Right Aligned</option>
+                          </select>
+                        </div>
+                        <div>
+                          <Label>Primary Color</Label>
+                          <Input
+                            type="color"
+                            value={editingTemplate.styles.primaryColor}
+                            onChange={(e) =>
+                              setEditingTemplate({
+                                ...editingTemplate,
+                                styles: {
+                                  ...editingTemplate.styles,
+                                  primaryColor: e.target.value,
+                                },
+                              })
+                            }
+                            className="h-10 p-1"
+                          />
+                        </div>
+                        <div>
+                          <Label>Accent Color</Label>
+                          <Input
+                            type="color"
+                            value={editingTemplate.styles.accentColor}
+                            onChange={(e) =>
+                              setEditingTemplate({
+                                ...editingTemplate,
+                                styles: {
+                                  ...editingTemplate.styles,
+                                  accentColor: e.target.value,
+                                },
+                              })
+                            }
+                            className="h-10 p-1"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <Label>Company Header Details</Label>
+                        <textarea
+                          rows={3}
+                          value={editingTemplate.companyHeaderText}
+                          onChange={(e) =>
+                            setEditingTemplate({
+                              ...editingTemplate,
+                              companyHeaderText: e.target.value,
+                            })
+                          }
+                          className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-xs text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                        />
+                      </div>
+
+                      <div>
+                        <Label>Payment Instructions</Label>
+                        <textarea
+                          rows={2}
+                          value={editingTemplate.paymentInstructions}
+                          onChange={(e) =>
+                            setEditingTemplate({
+                              ...editingTemplate,
+                              paymentInstructions: e.target.value,
+                            })
+                          }
+                          className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-xs text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                        />
+                      </div>
+
+                      <div>
+                        <Label>Footer Legal Clause</Label>
+                        <textarea
+                          rows={2}
+                          value={editingTemplate.footerLegalClause}
+                          onChange={(e) =>
+                            setEditingTemplate({
+                              ...editingTemplate,
+                              footerLegalClause: e.target.value,
+                            })
+                          }
+                          className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-xs text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                        />
+                      </div>
+
+                      <div className="flex justify-end">
+                        <Button type="submit" variant="primary">
+                          Save Branding & Template
+                        </Button>
+                      </div>
+                    </form>
+                  </Card>
+
+                  {/* Live Styled Preview */}
+                  <Card className="p-6 bg-white text-slate-900 overflow-hidden shadow-md">
                     <div
                       style={{
-                        display: 'flex',
-                        justifyContent:
-                          editingTemplate.logoPlacement === 'center'
-                            ? 'center'
-                            : editingTemplate.logoPlacement === 'right'
-                            ? 'flex-end'
-                            : 'flex-start',
-                        marginBottom: '12px',
+                        borderBottom: `2px solid ${editingTemplate.styles.tableBorderColor}`,
+                        background: editingTemplate.styles.headerBg,
+                        padding: '20px',
+                        borderRadius: '8px',
                       }}
                     >
-                      <span
+                      <div
                         style={{
-                          background: editingTemplate.styles.accentColor,
-                          color: '#fff',
-                          padding: '6px 14px',
-                          borderRadius: '6px',
-                          fontWeight: 800,
-                          fontSize: '12px',
+                          display: 'flex',
+                          justifyContent:
+                            editingTemplate.logoPlacement === 'center'
+                              ? 'center'
+                              : editingTemplate.logoPlacement === 'right'
+                              ? 'flex-end'
+                              : 'flex-start',
+                          marginBottom: '12px',
                         }}
                       >
-                        POCKETCRM • LIVE TEMPLATE PREVIEW
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-start gap-4">
-                      <div
-                        className="text-xs whitespace-pre-line"
-                        style={{ color: editingTemplate.styles.primaryColor }}
-                      >
-                        {editingTemplate.companyHeaderText}
+                        {editingTemplate.logoUrl ? (
+                          <img
+                            src={editingTemplate.logoUrl}
+                            alt="Logo"
+                            style={{ maxHeight: '50px', maxWidth: '200px', objectFit: 'contain' }}
+                          />
+                        ) : (
+                          <span
+                            style={{
+                              background: editingTemplate.styles.accentColor,
+                              color: '#fff',
+                              padding: '6px 14px',
+                              borderRadius: '6px',
+                              fontWeight: 800,
+                              fontSize: '12px',
+                            }}
+                          >
+                            POCKETCRM • LIVE PREVIEW
+                          </span>
+                        )}
                       </div>
-                      <div className="text-right">
+                      <div className="flex justify-between items-start gap-4">
                         <div
-                          className="text-lg font-black"
-                          style={{ color: editingTemplate.styles.accentColor }}
+                          className="text-xs whitespace-pre-line"
+                          style={{ color: editingTemplate.styles.primaryColor }}
                         >
-                          INV-2026-0001
+                          {editingTemplate.companyHeaderText}
                         </div>
-                        <div className="text-xs text-slate-500">Status: SENT</div>
+                        <div className="text-right">
+                          <div
+                            className="text-lg font-black"
+                            style={{ color: editingTemplate.styles.accentColor }}
+                          >
+                            INV-2026-0001
+                          </div>
+                          <div className="text-xs text-slate-500">Status: SENT</div>
+                        </div>
                       </div>
                     </div>
+
+                    <div className="py-6 space-y-4 text-xs">
+                      <div className="border-b border-slate-200 pb-3">
+                        <div className="font-bold text-slate-700">
+                          Application Development (Sample)
+                        </div>
+                        <div className="flex justify-between text-slate-500 mt-1">
+                          <span>40 hrs × $175.00 (+8.25% Tax)</span>
+                          <span className="font-bold text-slate-900">$7,577.50</span>
+                        </div>
+                      </div>
+
+                      <div
+                        className="rounded-lg p-3 space-y-2"
+                        style={{ background: editingTemplate.styles.headerBg }}
+                      >
+                        <div>
+                          <strong>Payment Instructions:</strong>
+                          <div className="text-slate-600 mt-0.5">
+                            {editingTemplate.paymentInstructions}
+                          </div>
+                        </div>
+                        <div className="text-[11px] text-slate-500 border-t border-slate-200 pt-2">
+                          {editingTemplate.footerLegalClause}
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+                </div>
+              )}
+
+              {/* Sub-view C: Team & Users */}
+              {adminSubTab === 'users' && (
+                <Card className="p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                        Team & User Access Control
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Manage member accounts, assign RBAC permissions, and reset credentials.
+                      </p>
+                    </div>
+
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => {
+                        setNewUserData({ name: '', email: '', password: '', role: 'member' });
+                        setNewUserModalOpen(true);
+                      }}
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      New User
+                    </Button>
                   </div>
 
-                  <div className="py-6 space-y-4 text-xs">
-                    <div className="border-b border-slate-200 pb-3">
-                      <div className="font-bold text-slate-700">
-                        Sample Line Item: Cloudflare Workers Edge Retainer
-                      </div>
-                      <div className="flex justify-between text-slate-500 mt-1">
-                        <span>40 hrs × $150.00 (+8.25% Tax)</span>
-                        <span className="font-bold text-slate-900">$6,470.25</span>
-                      </div>
-                    </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 dark:border-slate-800 text-xs uppercase text-slate-500 dark:text-slate-400">
+                          <th className="py-3 px-3">Name</th>
+                          <th className="py-3 px-3">Email</th>
+                          <th className="py-3 px-3">Role</th>
+                          <th className="py-3 px-3">Status</th>
+                          <th className="py-3 px-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                        {managedUsers.map((user) => (
+                          <tr key={user.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                            <td className="py-3 px-3 font-semibold text-slate-900 dark:text-white">
+                              {user.name}
+                              {user.id === currentUser.id && (
+                                <span className="ml-2 rounded bg-slate-200 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-600 dark:text-slate-400">
+                                  You
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-3 text-slate-600 dark:text-slate-300 font-mono text-xs">
+                              {user.email}
+                            </td>
+                            <td className="py-3 px-3">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800/60">
+                                {user.role}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3">
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold uppercase ${
+                                  user.banned
+                                    ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                                    : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                                }`}
+                              >
+                                {user.banned ? 'Suspended' : 'Active'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-right">
+                              <div className="inline-flex items-center gap-1.5 justify-end">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setEditingUser(user);
+                                    setEditUserData({
+                                      name: user.name,
+                                      email: user.email,
+                                      role: user.role,
+                                      banned: Boolean(user.banned),
+                                    });
+                                    setEditUserModalOpen(true);
+                                  }}
+                                  title="Edit user info"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                  Edit
+                                </Button>
 
-                    <div
-                      className="rounded-lg p-3 space-y-2"
-                      style={{ background: editingTemplate.styles.headerBg }}
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() => {
+                                    setResetPwUser(user);
+                                    setNewPasswordInput('');
+                                    setResetPwModalOpen(true);
+                                  }}
+                                  title="Reset user password"
+                                >
+                                  <Lock className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                                  Reset PW
+                                </Button>
+
+                                {currentUser.role === 'admin' && user.id !== currentUser.id && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleDeleteUser(user)}
+                                    className="text-rose-600 dark:text-rose-400 hover:text-rose-700 p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                                    title="Delete user"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Create User Modal */}
+                  <Dialog open={newUserModalOpen} onOpenChange={setNewUserModalOpen}>
+                    <DialogModal
+                      title="Create New User"
+                      description="Add a team member account and set their role and initial password."
                     >
-                      <div>
-                        <strong>Payment Instructions:</strong>
-                        <div className="text-slate-600 mt-0.5">
-                          {editingTemplate.paymentInstructions}
+                      <form onSubmit={handleCreateUser} className="space-y-4">
+                        <div>
+                          <Label>Full Name</Label>
+                          <Input
+                            type="text"
+                            value={newUserData.name}
+                            onChange={(e) =>
+                              setNewUserData({ ...newUserData, name: e.target.value })
+                            }
+                            placeholder="Sarah Connor"
+                            required
+                          />
+                        </div>
+
+                        <div>
+                          <Label>Email Address</Label>
+                          <Input
+                            type="email"
+                            value={newUserData.email}
+                            onChange={(e) =>
+                              setNewUserData({ ...newUserData, email: e.target.value })
+                            }
+                            placeholder="sarah@company.com"
+                            required
+                          />
+                        </div>
+
+                        <div>
+                          <Label>Role</Label>
+                          <select
+                            value={newUserData.role}
+                            onChange={(e) =>
+                              setNewUserData({
+                                ...newUserData,
+                                role: e.target.value as 'admin' | 'member' | 'viewer',
+                              })
+                            }
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                          >
+                            <option value="admin">Admin (Full Access & Templates)</option>
+                            <option value="member">Member / Manager (Manage Docs & Clients)</option>
+                            <option value="viewer">Viewer (Read-Only & Auditing)</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <Label>Initial Password (min 8 characters)</Label>
+                          <Input
+                            type="password"
+                            value={newUserData.password}
+                            onChange={(e) =>
+                              setNewUserData({ ...newUserData, password: e.target.value })
+                            }
+                            placeholder="••••••••••••"
+                            minLength={8}
+                            required
+                          />
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-2">
+                          <Button type="submit" variant="primary">
+                            Create Account
+                          </Button>
+                        </div>
+                      </form>
+                    </DialogModal>
+                  </Dialog>
+
+                  {/* Edit User Modal */}
+                  <Dialog open={editUserModalOpen} onOpenChange={setEditUserModalOpen}>
+                    <DialogModal
+                      title="Edit User Profile"
+                      description={`Update details and permissions for ${editingUser?.name || 'user'}.`}
+                    >
+                      <form onSubmit={handleUpdateUser} className="space-y-4">
+                        <div>
+                          <Label>Full Name</Label>
+                          <Input
+                            type="text"
+                            value={editUserData.name}
+                            onChange={(e) =>
+                              setEditUserData({ ...editUserData, name: e.target.value })
+                            }
+                            required
+                          />
+                        </div>
+
+                        <div>
+                          <Label>Email Address</Label>
+                          <Input
+                            type="email"
+                            value={editUserData.email}
+                            onChange={(e) =>
+                              setEditUserData({ ...editUserData, email: e.target.value })
+                            }
+                            required
+                          />
+                        </div>
+
+                        <div>
+                          <Label>Role</Label>
+                          <select
+                            value={editUserData.role}
+                            onChange={(e) =>
+                              setEditUserData({
+                                ...editUserData,
+                                role: e.target.value as 'admin' | 'member' | 'viewer',
+                              })
+                            }
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                          >
+                            <option value="admin">Admin (Full Access & Templates)</option>
+                            <option value="member">Member / Manager (Manage Docs & Clients)</option>
+                            <option value="viewer">Viewer (Read-Only & Auditing)</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer pt-1">
+                            <input
+                              type="checkbox"
+                              checked={editUserData.banned}
+                              onChange={(e) =>
+                                setEditUserData({ ...editUserData, banned: e.target.checked })
+                              }
+                            />
+                            Suspend / Ban this user account
+                          </label>
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-2">
+                          <Button type="submit" variant="primary">
+                            Save Changes
+                          </Button>
+                        </div>
+                      </form>
+                    </DialogModal>
+                  </Dialog>
+
+                  {/* Reset Password Modal */}
+                  <Dialog open={resetPwModalOpen} onOpenChange={setResetPwModalOpen}>
+                    <DialogModal
+                      title="Reset User Password"
+                      description={`Set a new password for ${resetPwUser?.email}.`}
+                    >
+                      <form onSubmit={handleResetPassword} className="space-y-4">
+                        <div>
+                          <Label>New Password (min 8 characters)</Label>
+                          <Input
+                            type="password"
+                            value={newPasswordInput}
+                            onChange={(e) => setNewPasswordInput(e.target.value)}
+                            placeholder="••••••••••••"
+                            minLength={8}
+                            required
+                          />
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-2">
+                          <Button type="submit" variant="primary">
+                            Update Password
+                          </Button>
+                        </div>
+                      </form>
+                    </DialogModal>
+                  </Dialog>
+                </Card>
+              )}
+
+              {/* Sub-view D: Audit Trail */}
+              {adminSubTab === 'audits' && (
+                <Card className="p-5">
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white mb-1">
+                    System Audit Trail (Cloudflare D1)
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
+                    Immutable history of logins, document state changes, and catalog updates.
+                  </p>
+                  <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
+                    {dashboard?.recentAudits.map((aud) => (
+                      <div
+                        key={aud.id}
+                        className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-800/80 dark:bg-slate-950/60"
+                      >
+                        <div className="flex items-center justify-between font-semibold text-blue-600 dark:text-blue-400">
+                          <span>{aud.action}</span>
+                          <span className="text-[10px] text-slate-500 uppercase">
+                            {aud.entityType}
+                          </span>
+                        </div>
+                        <div className="text-slate-500 dark:text-slate-400 mt-1 truncate">
+                          Actor: {aud.actorEmail || 'system'} • Entity ID: {aud.entityId} • Date: {new Date(aud.createdAt).toLocaleString()}
                         </div>
                       </div>
-                      <div className="text-[11px] text-slate-500 border-t border-slate-200 pt-2">
-                        {editingTemplate.footerLegalClause}
-                      </div>
-                    </div>
+                    ))}
                   </div>
                 </Card>
-              </div>
-            )}
-          </TabsContent>
+              )}
+            </TabsContent>
+          )}
         </Tabs>
       </main>
 
-      {/* New Invoice / New Quote Modal with Embedded Line Items CSV Import & Template Download */}
+      {/* New Invoice / New Quote Modal with Quick Catalog Picker & Embedded CSV Import */}
       <Dialog open={docModalOpen} onOpenChange={setDocModalOpen}>
         <DialogModal
           title={docFormType === 'estimate' ? 'Create Estimate / Quote' : 'Create Invoice'}
-          description="Atomic D1 batch parent-child insert with live line-items calculation, CSV import, and template download."
+          description="Atomic D1 batch parent-child insert with live line-items calculation, catalog picker, and CSV import."
           className="max-w-4xl"
         >
           <form onSubmit={handleCreateDocument} className="space-y-4">
@@ -2048,7 +2502,7 @@ export function App() {
                       )}`
                     );
                   }}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
                 >
                   <option value="invoice">Invoice</option>
                   <option value="estimate">Estimate / Quote</option>
@@ -2067,7 +2521,7 @@ export function App() {
                 <select
                   value={docClientId}
                   onChange={(e) => setDocClientId(e.target.value)}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
                   required
                 >
                   {clients.map((c) => (
@@ -2102,7 +2556,7 @@ export function App() {
                   onChange={(e) =>
                     setDocDiscountType(e.target.value as 'percentage' | 'fixed')
                   }
-                  className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
                 >
                   <option value="percentage">Percentage (%)</option>
                   <option value="fixed">Fixed Amount ($)</option>
@@ -2119,11 +2573,36 @@ export function App() {
               </div>
             </div>
 
+            {/* Quick Catalog Insertion Bar */}
+            {catalogItems.length > 0 && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/70">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    <Package className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                    <span>Quick Add from Service Catalog:</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {catalogItems.slice(0, 4).map((cat) => (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => handleAddFromCatalog(cat)}
+                        className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 cursor-pointer shadow-xs"
+                      >
+                        <Plus className="w-3 h-3 text-blue-600" />
+                        {cat.name} (${cat.unitPrice}/{cat.unit})
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Line Items Engine with Embedded CSV Import & Template Download */}
-            <div className="border-t border-slate-800 pt-4">
+            <div className="border-t border-slate-200 dark:border-slate-800 pt-4">
               <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                 <Label className="mb-0">
-                  Line Items (Supports Unit Prices, Discounts & Taxes)
+                  Line Items ({docItems.length})
                 </Label>
 
                 <div className="flex items-center gap-2">
@@ -2152,7 +2631,7 @@ export function App() {
                     onClick={() => itemCsvInputRef.current?.click()}
                     title="Import line items from CSV"
                   >
-                    <Upload className="w-3.5 h-3.5 text-blue-400" />
+                    <Upload className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                     Import CSV
                   </Button>
 
@@ -2164,7 +2643,7 @@ export function App() {
                       setDocItems([
                         ...docItems,
                         {
-                          name: 'Additional Engineering Service',
+                          name: 'Custom Service',
                           description: '',
                           quantity: 1,
                           unit: 'hrs',
@@ -2189,7 +2668,7 @@ export function App() {
                 {docItems.map((item, idx) => (
                   <div
                     key={idx}
-                    className="grid grid-cols-12 gap-2 items-center rounded-xl border border-slate-800/90 bg-slate-950/70 p-2.5"
+                    className="grid grid-cols-12 gap-2 items-center rounded-xl border border-slate-200 bg-white p-2.5 dark:border-slate-800/90 dark:bg-slate-950/70"
                   >
                     <div className="col-span-4">
                       <Input
@@ -2252,7 +2731,7 @@ export function App() {
                       />
                     </div>
                     <div className="col-span-2 flex items-center justify-end gap-2">
-                      <label className="flex items-center gap-1 text-[11px] text-slate-400 cursor-pointer">
+                      <label className="flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400 cursor-pointer">
                         <input
                           type="checkbox"
                           checked={Boolean(item.secondTaxCompound)}
@@ -2274,7 +2753,7 @@ export function App() {
                           onClick={() =>
                             setDocItems(docItems.filter((_, i) => i !== idx))
                           }
-                          className="text-rose-400 hover:text-rose-300 p-1"
+                          className="text-rose-600 dark:text-rose-400 hover:text-rose-700 p-1 cursor-pointer"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -2286,32 +2765,32 @@ export function App() {
             </div>
 
             {/* Live Calculated Summary */}
-            <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl bg-slate-950 p-4 border border-slate-800">
-              <div className="space-y-1 text-xs text-slate-400">
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl bg-slate-100 p-4 border border-slate-200 dark:bg-slate-950 dark:border-slate-800">
+              <div className="space-y-1 text-xs text-slate-600 dark:text-slate-400">
                 <div>
                   Subtotal:{' '}
-                  <strong className="text-slate-200">
+                  <strong className="text-slate-900 dark:text-slate-200">
                     ${liveCalculation.subtotal.toFixed(2)}
                   </strong>
                 </div>
                 <div>
                   Discount Total:{' '}
-                  <strong className="text-amber-400">
+                  <strong className="text-amber-600 dark:text-amber-400">
                     -${liveCalculation.discountTotal.toFixed(2)}
                   </strong>
                 </div>
                 <div>
                   Tax Total:{' '}
-                  <strong className="text-sky-400">
+                  <strong className="text-sky-600 dark:text-sky-400">
                     +${liveCalculation.taxTotal.toFixed(2)}
                   </strong>
                 </div>
               </div>
               <div className="text-right">
-                <div className="text-xs uppercase tracking-wider text-slate-400">
+                <div className="text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   Calculated Grand Total
                 </div>
-                <div className="text-2xl font-black text-white">
+                <div className="text-2xl font-black text-slate-900 dark:text-white">
                   {docCurrency} ${liveCalculation.total.toFixed(2)}
                 </div>
               </div>
@@ -2319,7 +2798,7 @@ export function App() {
 
             <div className="flex justify-end gap-2">
               <Button type="submit" variant="primary">
-                Commit Atomic Batch to D1
+                Commit Document to D1
               </Button>
             </div>
           </form>
