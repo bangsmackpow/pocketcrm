@@ -30,6 +30,8 @@ import {
   Image as ImageIcon,
   Mail,
   Send,
+  ArrowLeft,
+  Check,
 } from 'lucide-react';
 import {
   Button,
@@ -194,8 +196,9 @@ export function App() {
   const [emailCustomMessage, setEmailCustomMessage] = useState('');
   const [emailSending, setEmailSending] = useState(false);
 
-  // New Document (Estimate / Invoice) Composer State
-  const [docModalOpen, setDocModalOpen] = useState(false);
+  // Page View State: 'tabs' (standard views) vs 'composer' (dedicated full-page document editor)
+  const [pageView, setPageView] = useState<'tabs' | 'composer'>('tabs');
+  const [returnTab, setReturnTab] = useState<string>('invoices');
   const [editingDocId, setEditingDocId] = useState<string | null>(null);
   const [docFormType, setDocFormType] = useState<'estimate' | 'invoice'>('invoice');
   const [docNumber, setDocNumber] = useState('INV-2026-0042');
@@ -657,6 +660,7 @@ export function App() {
   );
 
   const openCreateDocumentModal = (type: 'invoice' | 'estimate' = 'invoice') => {
+    setReturnTab(activeTab || (type === 'estimate' ? 'estimates' : 'invoices'));
     setEditingDocId(null);
     setDocFormType(type);
     const nextPrefix = type === 'estimate' ? 'EST' : 'INV';
@@ -685,7 +689,13 @@ export function App() {
         taxCompound: false,
       },
     ]);
-    setDocModalOpen(true);
+    setPageView('composer');
+  };
+
+  const handleCancelComposer = () => {
+    setPageView('tabs');
+    setEditingDocId(null);
+    setActiveTab(returnTab || (docFormType === 'estimate' ? 'estimates' : 'invoices'));
   };
 
   const openEditInvoiceModal = async (inv: DocumentDto) => {
@@ -696,6 +706,7 @@ export function App() {
     try {
       const res = await apiFetch<{ invoice: DocumentDto & { items: any[] } }>(`/api/invoices/${inv.id}`);
       const fullDoc = res.invoice;
+      setReturnTab('invoices');
       setEditingDocId(fullDoc.id);
       setDocFormType('invoice');
       setDocNumber(fullDoc.documentNumber);
@@ -723,7 +734,7 @@ export function App() {
           }))
         );
       }
-      setDocModalOpen(true);
+      setPageView('composer');
     } catch (err: any) {
       notify('error', `Failed to open invoice for editing: ${err.message}`);
     }
@@ -737,6 +748,7 @@ export function App() {
     try {
       const res = await apiFetch<{ estimate: DocumentDto & { items: any[] } }>(`/api/estimates/${est.id}`);
       const fullDoc = res.estimate;
+      setReturnTab('estimates');
       setEditingDocId(fullDoc.id);
       setDocFormType('estimate');
       setDocNumber(fullDoc.documentNumber);
@@ -747,7 +759,7 @@ export function App() {
       setDocDiscountType(fullDoc.discountType || 'percentage');
       setDocDiscountValue(fullDoc.discountValue || 0);
       setDocNotes(fullDoc.notes || '');
-      setDocTerms(fullDoc.terms || 'Net 30 days');
+      setDocTerms(fullDoc.terms || 'Valid for 30 days');
       if (fullDoc.items && fullDoc.items.length > 0) {
         setDocItems(
           fullDoc.items.map((it) => ({
@@ -764,7 +776,7 @@ export function App() {
           }))
         );
       }
-      setDocModalOpen(true);
+      setPageView('composer');
     } catch (err: any) {
       notify('error', `Failed to open estimate for editing: ${err.message}`);
     }
@@ -792,8 +804,9 @@ export function App() {
             items: docItems,
           }),
         });
-        setDocModalOpen(false);
+        setPageView('tabs');
         setEditingDocId(null);
+        setActiveTab(returnTab || (docFormType === 'estimate' ? 'estimates' : 'invoices'));
         notify(
           'success',
           `${docFormType === 'estimate' ? 'Estimate' : 'Invoice'} ${docNumber} updated successfully.`
@@ -818,7 +831,9 @@ export function App() {
           items: docItems,
         }),
       });
-      setDocModalOpen(false);
+      setPageView('tabs');
+      setEditingDocId(null);
+      setActiveTab(returnTab || (docFormType === 'estimate' ? 'estimates' : 'invoices'));
       notify(
         'success',
         `${docFormType === 'estimate' ? 'Estimate' : 'Invoice'} ${docNumber} created.`
@@ -1160,6 +1175,7 @@ export function App() {
 
       {/* Main Workspace Navigation: Clean & Focused */}
       <main className="mx-auto max-w-7xl w-full flex-1 px-4 sm:px-6 py-6">
+        {pageView !== 'composer' && (
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
             <TabsList>
@@ -2744,461 +2760,538 @@ export function App() {
             </TabsContent>
           )}
         </Tabs>
-      </main>
+        )}
 
-      {/* New Invoice / New Quote / Edit Document Full-Window Modal */}
-      <Dialog open={docModalOpen} onOpenChange={setDocModalOpen}>
-        <DialogModal
-          title={
-            editingDocId
-              ? `Edit ${docFormType === 'estimate' ? 'Estimate / Quote' : 'Invoice'}: ${docNumber}`
-              : docFormType === 'estimate'
-              ? 'Create Estimate / Quote'
-              : 'Create Invoice'
-          }
-          description={
-            editingDocId
-              ? 'Modify item contents, deliverables, scope of work, quantities, pricing, and terms.'
-              : 'Atomic D1 batch parent-child insert with live line-items calculation, catalog picker, and CSV import.'
-          }
-          className="w-[96vw] max-w-[1500px] h-[92vh] max-h-[92vh] flex flex-col p-6 overflow-hidden"
-        >
-          <form onSubmit={handleCreateDocument} className="flex flex-col flex-1 min-h-0 space-y-3">
-            {/* 1. Header Metadata Bar */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 rounded-xl border border-slate-200/90 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/60 shrink-0">
-              <div>
-                <Label className="text-[11px] text-slate-500 mb-1">Doc Type</Label>
-                <select
-                  disabled={Boolean(editingDocId)}
-                  value={docFormType}
-                  onChange={(e) => {
-                    const t = e.target.value as 'estimate' | 'invoice';
-                    setDocFormType(t);
-                    setDocNumber(
-                      `${t === 'estimate' ? 'EST' : 'INV'}-2026-${Math.floor(
-                        1000 + Math.random() * 9000
-                      )}`
-                    );
-                  }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 disabled:opacity-60 disabled:cursor-not-allowed dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-                >
-                  <option value="invoice">Invoice</option>
-                  <option value="estimate">Estimate / Quote</option>
-                </select>
-              </div>
-
-              <div>
-                <Label className="text-[11px] text-slate-500 mb-1">Doc Number</Label>
-                <Input
-                  value={docNumber}
-                  onChange={(e) => setDocNumber(e.target.value)}
-                  disabled={Boolean(editingDocId)}
-                  required
-                  className="text-xs py-1.5"
-                />
-              </div>
-
-              <div className="col-span-2 sm:col-span-2 lg:col-span-2">
-                <Label className="text-[11px] text-slate-500 mb-1">Client</Label>
-                <select
-                  value={docClientId}
-                  onChange={(e) => setDocClientId(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-                  required
-                >
-                  {clients.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.companyName} ({c.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <Label className="text-[11px] text-slate-500 mb-1">Issue Date</Label>
-                <Input
-                  type="date"
-                  value={docIssueDate}
-                  onChange={(e) => setDocIssueDate(e.target.value)}
-                  required
-                  className="text-xs py-1.5"
-                />
-              </div>
-
-              <div>
-                <Label className="text-[11px] text-slate-500 mb-1">Due Date</Label>
-                <Input
-                  type="date"
-                  value={docDueDate}
-                  onChange={(e) => setDocDueDate(e.target.value)}
-                  required
-                  className="text-xs py-1.5"
-                />
-              </div>
-
-              <div>
-                <Label className="text-[11px] text-slate-500 mb-1">Currency</Label>
-                <select
-                  value={docCurrency}
-                  onChange={(e) => setDocCurrency(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-                >
-                  <option value="USD">USD ($)</option>
-                  <option value="EUR">EUR (€)</option>
-                  <option value="GBP">GBP (£)</option>
-                  <option value="CAD">CAD ($)</option>
-                </select>
-              </div>
-            </div>
-
-            {/* 2. Quick Catalog Insertion Bar */}
-            {catalogItems.length > 0 && (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-800 dark:bg-slate-950/70 shrink-0">
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  <Package className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                  <span>Quick Add from Service Catalog:</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {catalogItems.slice(0, 5).map((cat) => (
-                    <button
-                      key={cat.id}
-                      type="button"
-                      onClick={() => handleAddFromCatalog(cat)}
-                      className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 cursor-pointer shadow-xs transition-colors"
-                    >
-                      <Plus className="w-3 h-3 text-blue-600" />
-                      {cat.name} (${cat.unitPrice}/{cat.unit})
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 3. Line Items Header */}
-            <div className="flex flex-wrap items-center justify-between gap-2 shrink-0 pt-1">
-              <div className="flex items-center gap-2">
-                <Label className="mb-0 text-sm font-bold text-slate-900 dark:text-white">
-                  Line Items ({docItems.length})
-                </Label>
-                <span className="text-xs text-slate-500 dark:text-slate-400 hidden sm:inline">
-                  • Detailed descriptions, deliverable contents, rates, and quantities
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <input
-                  type="file"
-                  ref={itemCsvInputRef}
-                  onChange={handleItemCsvUpload}
-                  accept=".csv,text/csv"
-                  className="hidden"
-                />
+        {/* Dedicated Full-Page Document Composer */}
+        {pageView === 'composer' && (
+          <div className="space-y-6 pb-20">
+            {/* Page Header with Back button and Primary Action */}
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
+              <div className="flex items-center gap-3">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={downloadItemsTemplate}
-                  title="Download deterministic Line Items CSV template"
+                  onClick={handleCancelComposer}
+                  className="gap-1.5"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  CSV Template
+                  <ArrowLeft className="w-4 h-4" />
+                  Back to {returnTab === 'estimates' ? 'Estimates / Quotes' : 'Invoices'}
                 </Button>
+                <div>
+                  <h1 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
+                    {editingDocId
+                      ? `Edit ${docFormType === 'estimate' ? 'Estimate' : 'Invoice'}: ${docNumber}`
+                      : `New ${docFormType === 'estimate' ? 'Estimate / Quote' : 'Invoice'}`}
+                  </h1>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {editingDocId
+                      ? 'Modify item contents, deliverables, scope of work, quantities, rates, and payment terms.'
+                      : 'Add line items, select from service catalog, adjust terms, and commit to Cloudflare D1.'}
+                  </p>
+                </div>
+              </div>
 
+              <div className="flex items-center gap-2">
                 <Button
                   type="button"
-                  variant="secondary"
+                  variant="ghost"
                   size="sm"
-                  onClick={() => itemCsvInputRef.current?.click()}
-                  title="Import line items from CSV"
+                  onClick={handleCancelComposer}
                 >
-                  <Upload className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                  Import CSV
+                  Cancel
                 </Button>
-
                 <Button
                   type="button"
                   variant="primary"
                   size="sm"
-                  onClick={() =>
-                    setDocItems([
-                      ...docItems,
-                      {
-                        name: 'Custom Service / Deliverable',
-                        description: '',
-                        quantity: 1,
-                        unit: 'hrs',
-                        unitPrice: 150,
-                        discountType: 'percentage',
-                        discountValue: 0,
-                        taxName: 'Tax',
-                        taxRate: 8.25,
-                        taxCompound: false,
-                        secondTaxRate: 0,
-                        secondTaxCompound: false,
-                      },
-                    ])
-                  }
+                  onClick={handleCreateDocument}
+                  className="gap-1.5 shadow-sm"
                 >
-                  <Plus className="w-3.5 h-3.5" /> Add Item Row
-                </Button>
-              </div>
-            </div>
-
-            {/* 4. Full-Window Scrollable Line Items Workspace */}
-            <div className="flex-1 min-h-[260px] overflow-y-auto space-y-3 p-3 rounded-xl border border-slate-200/90 bg-slate-100/60 dark:border-slate-800 dark:bg-slate-950/40">
-              {docItems.map((item, idx) => (
-                <div
-                  key={idx}
-                  className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-xs transition-colors dark:border-slate-800 dark:bg-slate-900 space-y-2.5"
-                >
-                  {/* Top Row: Name, Quantity, Unit, Unit Price, Tax Rate, Line Total & Remove */}
-                  <div className="grid grid-cols-12 gap-2.5 items-end">
-                    <div className="col-span-12 lg:col-span-4">
-                      <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                        Item / Service Name *
-                      </Label>
-                      <Input
-                        value={item.name}
-                        onChange={(e) => {
-                          const next = [...docItems];
-                          next[idx] = { ...item, name: e.target.value };
-                          setDocItems(next);
-                        }}
-                        placeholder="Item or service name (e.g. Dedicated Cloud Infrastructure)"
-                        required
-                        className="text-xs"
-                      />
-                    </div>
-
-                    <div className="col-span-4 sm:col-span-2 lg:col-span-2">
-                      <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                        Quantity
-                      </Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={item.quantity}
-                        onChange={(e) => {
-                          const next = [...docItems];
-                          next[idx] = {
-                            ...item,
-                            quantity: Number(e.target.value),
-                          };
-                          setDocItems(next);
-                        }}
-                        placeholder="1"
-                        className="text-xs"
-                      />
-                    </div>
-
-                    <div className="col-span-4 sm:col-span-2 lg:col-span-1">
-                      <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                        Unit
-                      </Label>
-                      <Input
-                        value={item.unit || 'hrs'}
-                        onChange={(e) => {
-                          const next = [...docItems];
-                          next[idx] = { ...item, unit: e.target.value };
-                          setDocItems(next);
-                        }}
-                        placeholder="hrs"
-                        className="text-xs"
-                      />
-                    </div>
-
-                    <div className="col-span-4 sm:col-span-2 lg:col-span-2">
-                      <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                        Unit Price ($)
-                      </Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={item.unitPrice}
-                        onChange={(e) => {
-                          const next = [...docItems];
-                          next[idx] = {
-                            ...item,
-                            unitPrice: Number(e.target.value),
-                          };
-                          setDocItems(next);
-                        }}
-                        placeholder="150.00"
-                        className="text-xs"
-                      />
-                    </div>
-
-                    <div className="col-span-4 sm:col-span-2 lg:col-span-1">
-                      <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                        Tax (%)
-                      </Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={item.taxRate}
-                        onChange={(e) => {
-                          const next = [...docItems];
-                          next[idx] = {
-                            ...item,
-                            taxRate: Number(e.target.value),
-                          };
-                          setDocItems(next);
-                        }}
-                        placeholder="8.25"
-                        className="text-xs"
-                      />
-                    </div>
-
-                    <div className="col-span-8 sm:col-span-4 lg:col-span-2 flex items-center justify-end gap-3 pb-0.5">
-                      <div className="text-right">
-                        <div className="text-[10px] uppercase font-semibold text-slate-400">
-                          Line Total
-                        </div>
-                        <div className="text-sm font-bold text-slate-900 dark:text-white">
-                          ${(
-                            liveCalculation.items[idx]?.lineTotal ??
-                            item.quantity * item.unitPrice
-                          ).toFixed(2)}
-                        </div>
-                      </div>
-                      {docItems.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setDocItems(docItems.filter((_, i) => i !== idx))
-                          }
-                          className="text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 p-2 rounded-lg cursor-pointer transition-colors"
-                          title="Remove line item"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Bottom Row: Detailed Description / Deliverables / Contents Editor */}
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0">
-                        Item Description & Scope of Work / Contents
-                      </Label>
-                      <label className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(item.secondTaxCompound)}
-                          onChange={(e) => {
-                            const next = [...docItems];
-                            next[idx] = {
-                              ...item,
-                              secondTaxRate: e.target.checked ? 5 : 0,
-                              secondTaxCompound: e.target.checked,
-                            };
-                            setDocItems(next);
-                          }}
-                          className="rounded text-blue-600 focus:ring-blue-500"
-                        />
-                        Compound Tax (+5%)
-                      </label>
-                    </div>
-                    <textarea
-                      rows={2}
-                      value={item.description || ''}
-                      onChange={(e) => {
-                        const next = [...docItems];
-                        next[idx] = { ...item, description: e.target.value };
-                        setDocItems(next);
-                      }}
-                      placeholder="Detailed item description, specific deliverables, scope of work, technical specifications, or milestone notes..."
-                      className="w-full rounded-lg border border-slate-300 bg-slate-50/60 px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-950/70 dark:text-slate-100 dark:focus:bg-slate-950"
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* 5. Docked Footer: Notes, Terms, Live Totals & Action Buttons */}
-            <div className="shrink-0 space-y-3 pt-2 border-t border-slate-200 dark:border-slate-800">
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-center">
-                {/* Notes and Terms Inputs */}
-                <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <div>
-                    <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                      Public Notes & Remittance Advice
-                    </Label>
-                    <textarea
-                      rows={2}
-                      value={docNotes}
-                      onChange={(e) => setDocNotes(e.target.value)}
-                      placeholder="e.g. Q4 dedicated sprint retainer. Wire transfer reference..."
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                      Payment Terms & Conditions
-                    </Label>
-                    <textarea
-                      rows={2}
-                      value={docTerms}
-                      onChange={(e) => setDocTerms(e.target.value)}
-                      placeholder="e.g. Net 30 days. Late balances accrue 1.5% interest."
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
-                    />
-                  </div>
-                </div>
-
-                {/* Live Calculated Grand Summary */}
-                <div className="lg:col-span-5 rounded-xl bg-slate-100 p-3.5 border border-slate-200 dark:bg-slate-950 dark:border-slate-800 flex items-center justify-between">
-                  <div className="space-y-1 text-xs text-slate-600 dark:text-slate-400">
-                    <div>
-                      Subtotal:{' '}
-                      <strong className="text-slate-900 dark:text-slate-200">
-                        ${liveCalculation.subtotal.toFixed(2)}
-                      </strong>
-                    </div>
-                    {liveCalculation.discountTotal > 0 && (
-                      <div>
-                        Discount:{' '}
-                        <strong className="text-amber-600 dark:text-amber-400">
-                          -${liveCalculation.discountTotal.toFixed(2)}
-                        </strong>
-                      </div>
-                    )}
-                    <div>
-                      Tax Total:{' '}
-                      <strong className="text-sky-600 dark:text-sky-400">
-                        +${liveCalculation.taxTotal.toFixed(2)}
-                      </strong>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400">
-                      Calculated Total
-                    </div>
-                    <div className="text-2xl font-black text-slate-900 dark:text-white">
-                      {docCurrency} ${liveCalculation.total.toFixed(2)}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center justify-between pt-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setDocModalOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" variant="primary" className="px-6">
+                  <Check className="w-4 h-4" />
                   {editingDocId ? 'Save & Update Document' : 'Commit Document to D1'}
                 </Button>
               </div>
             </div>
-          </form>
-        </DialogModal>
-      </Dialog>
+
+            <form onSubmit={handleCreateDocument} className="space-y-6">
+              {/* 1. Header Metadata Card */}
+              <Card className="p-5 space-y-4">
+                <div className="border-b border-slate-200 dark:border-slate-800 pb-2">
+                  <h2 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                    1. Document Parameters & Client
+                  </h2>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+                  <div>
+                    <Label className="text-[11px] text-slate-500 mb-1">Doc Type</Label>
+                    <select
+                      disabled={Boolean(editingDocId)}
+                      value={docFormType}
+                      onChange={(e) => {
+                        const t = e.target.value as 'estimate' | 'invoice';
+                        setDocFormType(t);
+                        setDocNumber(
+                          `${t === 'estimate' ? 'EST' : 'INV'}-2026-${Math.floor(
+                            1000 + Math.random() * 9000
+                          )}`
+                        );
+                      }}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 disabled:opacity-60 disabled:cursor-not-allowed dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                    >
+                      <option value="invoice">Invoice</option>
+                      <option value="estimate">Estimate / Quote</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <Label className="text-[11px] text-slate-500 mb-1">Doc Number</Label>
+                    <Input
+                      value={docNumber}
+                      onChange={(e) => setDocNumber(e.target.value)}
+                      disabled={Boolean(editingDocId)}
+                      required
+                      className="text-xs py-1.5"
+                    />
+                  </div>
+
+                  <div className="col-span-2 sm:col-span-2 lg:col-span-2">
+                    <Label className="text-[11px] text-slate-500 mb-1">Client</Label>
+                    <select
+                      value={docClientId}
+                      onChange={(e) => setDocClientId(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                      required
+                    >
+                      {clients.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.companyName} ({c.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <Label className="text-[11px] text-slate-500 mb-1">Issue Date</Label>
+                    <Input
+                      type="date"
+                      value={docIssueDate}
+                      onChange={(e) => setDocIssueDate(e.target.value)}
+                      required
+                      className="text-xs py-1.5"
+                    />
+                  </div>
+
+                  <div>
+                    <Label className="text-[11px] text-slate-500 mb-1">Due Date</Label>
+                    <Input
+                      type="date"
+                      value={docDueDate}
+                      onChange={(e) => setDocDueDate(e.target.value)}
+                      required
+                      className="text-xs py-1.5"
+                    />
+                  </div>
+
+                  <div>
+                    <Label className="text-[11px] text-slate-500 mb-1">Currency</Label>
+                    <select
+                      value={docCurrency}
+                      onChange={(e) => setDocCurrency(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                    >
+                      <option value="USD">USD ($)</option>
+                      <option value="EUR">EUR (€)</option>
+                      <option value="GBP">GBP (£)</option>
+                      <option value="CAD">CAD ($)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-200/80 dark:border-slate-800/80">
+                  <div>
+                    <Label className="text-[11px] text-slate-500 mb-1">Document Discount Type</Label>
+                    <select
+                      value={docDiscountType}
+                      onChange={(e) =>
+                        setDocDiscountType(e.target.value as 'percentage' | 'fixed')
+                      }
+                      className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                    >
+                      <option value="percentage">Percentage (%)</option>
+                      <option value="fixed">Fixed Amount ($)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <Label className="text-[11px] text-slate-500 mb-1">Document Discount Value</Label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={docDiscountValue}
+                      onChange={(e) => setDocDiscountValue(Number(e.target.value))}
+                      className="text-xs py-1.5"
+                    />
+                  </div>
+                </div>
+              </Card>
+
+              {/* 2. Quick Catalog Toolbar */}
+              {catalogItems.length > 0 && (
+                <Card className="p-4 bg-slate-50 dark:bg-slate-900/60 border-dashed">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      <Package className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      <span>Quick Add from Service Catalog:</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {catalogItems.map((cat) => (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => handleAddFromCatalog(cat)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:border-blue-400 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 cursor-pointer shadow-xs transition-colors"
+                        >
+                          <Plus className="w-3.5 h-3.5 text-blue-600" />
+                          {cat.name} (${cat.unitPrice}/{cat.unit})
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </Card>
+              )}
+
+              {/* 3. Line Items Engine Card */}
+              <Card className="p-5 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
+                  <div>
+                    <h2 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                      2. Line Items ({docItems.length})
+                    </h2>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Detailed descriptions, deliverables, rates, and quantities for each item
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="file"
+                      ref={itemCsvInputRef}
+                      onChange={handleItemCsvUpload}
+                      accept=".csv,text/csv"
+                      className="hidden"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={downloadItemsTemplate}
+                      title="Download deterministic Line Items CSV template"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      CSV Template
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => itemCsvInputRef.current?.click()}
+                      title="Import line items from CSV"
+                    >
+                      <Upload className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                      Import CSV
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="sm"
+                      onClick={() =>
+                        setDocItems([
+                          ...docItems,
+                          {
+                            name: 'Custom Service / Deliverable',
+                            description: '',
+                            quantity: 1,
+                            unit: 'hrs',
+                            unitPrice: 150,
+                            discountType: 'percentage',
+                            discountValue: 0,
+                            taxName: 'Tax',
+                            taxRate: 8.25,
+                            taxCompound: false,
+                            secondTaxRate: 0,
+                            secondTaxCompound: false,
+                          },
+                        ])
+                      }
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add Row
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Natural Full-Page Line Item Cards */}
+                <div className="space-y-4">
+                  {docItems.map((item, idx) => (
+                    <div
+                      key={idx}
+                      className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 shadow-xs transition-colors dark:border-slate-800 dark:bg-slate-900/80 space-y-3"
+                    >
+                      {/* Top Row: Name, Quantity, Unit, Unit Price, Tax Rate, Line Total & Remove */}
+                      <div className="grid grid-cols-12 gap-3 items-end">
+                        <div className="col-span-12 lg:col-span-4">
+                          <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                            Item / Service Name *
+                          </Label>
+                          <Input
+                            value={item.name}
+                            onChange={(e) => {
+                              const next = [...docItems];
+                              next[idx] = { ...item, name: e.target.value };
+                              setDocItems(next);
+                            }}
+                            placeholder="Item or service name (e.g. Dedicated Cloud Infrastructure)"
+                            required
+                          />
+                        </div>
+
+                        <div className="col-span-4 sm:col-span-2 lg:col-span-2">
+                          <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                            Quantity
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            value={item.quantity}
+                            onChange={(e) => {
+                              const next = [...docItems];
+                              next[idx] = {
+                                ...item,
+                                quantity: Number(e.target.value),
+                              };
+                              setDocItems(next);
+                            }}
+                            placeholder="1"
+                          />
+                        </div>
+
+                        <div className="col-span-4 sm:col-span-2 lg:col-span-1">
+                          <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                            Unit
+                          </Label>
+                          <Input
+                            value={item.unit || 'hrs'}
+                            onChange={(e) => {
+                              const next = [...docItems];
+                              next[idx] = { ...item, unit: e.target.value };
+                              setDocItems(next);
+                            }}
+                            placeholder="hrs"
+                          />
+                        </div>
+
+                        <div className="col-span-4 sm:col-span-2 lg:col-span-2">
+                          <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                            Unit Price ($)
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            value={item.unitPrice}
+                            onChange={(e) => {
+                              const next = [...docItems];
+                              next[idx] = {
+                                ...item,
+                                unitPrice: Number(e.target.value),
+                              };
+                              setDocItems(next);
+                            }}
+                            placeholder="150.00"
+                          />
+                        </div>
+
+                        <div className="col-span-4 sm:col-span-2 lg:col-span-1">
+                          <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                            Tax (%)
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            value={item.taxRate}
+                            onChange={(e) => {
+                              const next = [...docItems];
+                              next[idx] = {
+                                ...item,
+                                taxRate: Number(e.target.value),
+                              };
+                              setDocItems(next);
+                            }}
+                            placeholder="8.25"
+                          />
+                        </div>
+
+                        <div className="col-span-8 sm:col-span-4 lg:col-span-2 flex items-center justify-end gap-3 pb-0.5">
+                          <div className="text-right">
+                            <div className="text-[10px] uppercase font-semibold text-slate-400">
+                              Line Total
+                            </div>
+                            <div className="text-base font-bold text-slate-900 dark:text-white">
+                              ${(
+                                liveCalculation.items[idx]?.lineTotal ??
+                                item.quantity * item.unitPrice
+                              ).toFixed(2)}
+                            </div>
+                          </div>
+                          {docItems.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDocItems(docItems.filter((_, i) => i !== idx))
+                              }
+                              className="text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 p-2 rounded-lg cursor-pointer transition-colors"
+                              title="Remove line item"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Bottom Row: Detailed Description / Deliverables / Contents Editor */}
+                      <div className="space-y-1 pt-1">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0">
+                            Item Contents, Detailed Description & Deliverables
+                          </Label>
+                          <label className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(item.secondTaxCompound)}
+                              onChange={(e) => {
+                                const next = [...docItems];
+                                next[idx] = {
+                                  ...item,
+                                  secondTaxRate: e.target.checked ? 5 : 0,
+                                  secondTaxCompound: e.target.checked,
+                                };
+                                setDocItems(next);
+                              }}
+                              className="rounded text-blue-600 focus:ring-blue-500"
+                            />
+                            Apply Compound Tax (+5%)
+                          </label>
+                        </div>
+                        <textarea
+                          rows={3}
+                          value={item.description || ''}
+                          onChange={(e) => {
+                            const next = [...docItems];
+                            next[idx] = { ...item, description: e.target.value };
+                            setDocItems(next);
+                          }}
+                          placeholder="Detailed item description, specific deliverables, scope of work, technical specifications, or milestone notes..."
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-950/70 dark:text-slate-100 dark:focus:bg-slate-950"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+
+              {/* 4. Notes, Terms & Live Totals */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                <div className="lg:col-span-7 space-y-4">
+                  <Card className="p-5 space-y-3">
+                    <h2 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                      3. Notes & Remittance Instructions
+                    </h2>
+                    <textarea
+                      rows={3}
+                      value={docNotes}
+                      onChange={(e) => setDocNotes(e.target.value)}
+                      placeholder="e.g. Q4 dedicated edge retainer. Remit payments via Wire/ACH..."
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </Card>
+
+                  <Card className="p-5 space-y-3">
+                    <h2 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                      4. Payment Terms & Legal Clauses
+                    </h2>
+                    <textarea
+                      rows={3}
+                      value={docTerms}
+                      onChange={(e) => setDocTerms(e.target.value)}
+                      placeholder="e.g. Net 30 days. Late invoices accrue 1.5% interest per month."
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </Card>
+                </div>
+
+                <div className="lg:col-span-5">
+                  <Card className="p-6 space-y-4 sticky top-20 bg-slate-100 dark:bg-slate-900/90 border-2 border-slate-200 dark:border-slate-800 shadow-md">
+                    <h2 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                      Summary Calculation
+                    </h2>
+
+                    <div className="space-y-2 text-sm text-slate-600 dark:text-slate-300">
+                      <div className="flex justify-between">
+                        <span>Subtotal ({docItems.length} items):</span>
+                        <span className="font-semibold text-slate-900 dark:text-white">
+                          ${liveCalculation.subtotal.toFixed(2)}
+                        </span>
+                      </div>
+                      {liveCalculation.discountTotal > 0 && (
+                        <div className="flex justify-between text-amber-600 dark:text-amber-400">
+                          <span>Document Discount:</span>
+                          <span className="font-semibold">
+                            -${liveCalculation.discountTotal.toFixed(2)}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex justify-between text-sky-600 dark:text-sky-400">
+                        <span>Total Tax:</span>
+                        <span className="font-semibold">
+                          +${liveCalculation.taxTotal.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="border-t border-slate-300 dark:border-slate-700 pt-3 flex justify-between items-baseline">
+                        <span className="text-base font-bold text-slate-900 dark:text-white">
+                          Grand Total:
+                        </span>
+                        <span className="text-3xl font-black text-blue-600 dark:text-blue-400">
+                          {docCurrency} ${liveCalculation.total.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-2">
+                      <Button
+                        type="submit"
+                        variant="primary"
+                        className="w-full py-3 text-sm font-bold gap-2 justify-center shadow-md"
+                      >
+                        <Check className="w-4 h-4" />
+                        {editingDocId ? 'Save & Update Document' : 'Commit Document to D1'}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="w-full justify-center text-xs"
+                        onClick={handleCancelComposer}
+                      >
+                        Cancel & Return to {returnTab === 'estimates' ? 'Quotes' : 'Invoices'}
+                      </Button>
+                    </div>
+                  </Card>
+                </div>
+              </div>
+            </form>
+          </div>
+        )}
+      </main>
 
       {/* 7. NATIVE CLOUDFLARE EMAIL DISPATCH MODAL */}
       <Dialog open={emailModalOpen} onOpenChange={setEmailModalOpen}>
