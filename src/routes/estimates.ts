@@ -594,7 +594,7 @@ estimateRoutes.get('/:id/pdf', requireRole('viewer'), async (c) => {
     return c.html(html);
   }
 
-  const pdfBytes = generateDocumentPdfBuffer({
+  const pdfBytes = await generateDocumentPdfBuffer({
     document: doc,
     client,
     items,

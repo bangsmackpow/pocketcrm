@@ -180,6 +180,27 @@ export function App() {
     country: 'US',
   });
 
+  // Client Edit Modal State
+  const [editClientModalOpen, setEditClientModalOpen] = useState(false);
+  const [editingClient, setEditingClient] = useState<ClientDto | null>(null);
+  const [editClientForm, setEditClientForm] = useState({
+    code: '',
+    companyName: '',
+    contactName: '',
+    email: '',
+    phone: '',
+    website: '',
+    taxIdentifier: '',
+    paymentTermsDays: 30,
+    currency: 'USD',
+    line1: '',
+    city: '',
+    state: '',
+    postalCode: '',
+    country: 'US',
+    notes: '',
+  });
+
   // Client CSV Import Modal State
   const [clientImportModalOpen, setClientImportModalOpen] = useState(false);
   const [clientCsvText, setClientCsvText] = useState('');
@@ -513,6 +534,63 @@ export function App() {
       await refreshWorkspace();
     } catch (err) {
       notify('error', err instanceof Error ? err.message : 'Failed to create client');
+    }
+  };
+
+  const openEditClientModal = (cli: ClientDto) => {
+    setEditingClient(cli);
+    setEditClientForm({
+      code: cli.code || '',
+      companyName: cli.companyName || '',
+      contactName: cli.contactName || '',
+      email: cli.email || '',
+      phone: cli.phone || '',
+      website: cli.website || '',
+      taxIdentifier: cli.taxIdentifier || '',
+      paymentTermsDays: cli.paymentTermsDays ?? 30,
+      currency: cli.currency || 'USD',
+      line1: cli.billingAddress?.line1 || '',
+      city: cli.billingAddress?.city || '',
+      state: cli.billingAddress?.state || '',
+      postalCode: cli.billingAddress?.postalCode || '',
+      country: cli.billingAddress?.country || 'US',
+      notes: cli.notes || '',
+    });
+    setEditClientModalOpen(true);
+  };
+
+  const handleUpdateClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingClient) return;
+    try {
+      await apiFetch(`/api/clients/${editingClient.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          code: editClientForm.code,
+          companyName: editClientForm.companyName,
+          contactName: editClientForm.contactName,
+          email: editClientForm.email,
+          phone: editClientForm.phone || undefined,
+          website: editClientForm.website || undefined,
+          taxIdentifier: editClientForm.taxIdentifier || undefined,
+          paymentTermsDays: Number(editClientForm.paymentTermsDays),
+          currency: editClientForm.currency,
+          billingAddress: {
+            line1: editClientForm.line1,
+            city: editClientForm.city,
+            state: editClientForm.state || undefined,
+            postalCode: editClientForm.postalCode,
+            country: editClientForm.country,
+          },
+          notes: editClientForm.notes || undefined,
+        }),
+      });
+      setEditClientModalOpen(false);
+      setEditingClient(null);
+      notify('success', `Client "${editClientForm.companyName}" updated successfully.`);
+      await refreshWorkspace();
+    } catch (err) {
+      notify('error', err instanceof Error ? err.message : 'Failed to update client');
     }
   };
 
@@ -1519,6 +1597,7 @@ export function App() {
                       <th className="py-3 px-3">Tax ID</th>
                       <th className="py-3 px-3">Terms</th>
                       <th className="py-3 px-3">Billing City</th>
+                      <th className="py-3 px-3 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -1544,12 +1623,198 @@ export function App() {
                           {cli.billingAddress?.city}, {cli.billingAddress?.state}{' '}
                           {cli.billingAddress?.country}
                         </td>
+                        <td className="py-3 px-3 text-right">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openEditClientModal(cli)}
+                            className="inline-flex items-center gap-1.5"
+                            title="Edit Client Details"
+                          >
+                            <Edit2 className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+                            Edit
+                          </Button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             </Card>
+
+            {/* Edit Client Modal */}
+            <Dialog open={editClientModalOpen} onOpenChange={setEditClientModalOpen}>
+              <DialogModal
+                title={`Edit Client: ${editingClient?.companyName || ''}`}
+                description="Update customer details, billing address, tax identification, and remittance terms."
+              >
+                <form onSubmit={handleUpdateClient} className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label>Client Code</Label>
+                      <Input
+                        value={editClientForm.code}
+                        onChange={(e) =>
+                          setEditClientForm({ ...editClientForm, code: e.target.value })
+                        }
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label>Company Name</Label>
+                      <Input
+                        value={editClientForm.companyName}
+                        onChange={(e) =>
+                          setEditClientForm({ ...editClientForm, companyName: e.target.value })
+                        }
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label>Primary Contact Name</Label>
+                      <Input
+                        value={editClientForm.contactName}
+                        onChange={(e) =>
+                          setEditClientForm({ ...editClientForm, contactName: e.target.value })
+                        }
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label>Billing Email</Label>
+                      <Input
+                        type="email"
+                        value={editClientForm.email}
+                        onChange={(e) =>
+                          setEditClientForm({ ...editClientForm, email: e.target.value })
+                        }
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label>Phone Number</Label>
+                      <Input
+                        value={editClientForm.phone}
+                        onChange={(e) =>
+                          setEditClientForm({ ...editClientForm, phone: e.target.value })
+                        }
+                        placeholder="+1 (555) 000-0000"
+                      />
+                    </div>
+                    <div>
+                      <Label>Website</Label>
+                      <Input
+                        value={editClientForm.website}
+                        onChange={(e) =>
+                          setEditClientForm({ ...editClientForm, website: e.target.value })
+                        }
+                        placeholder="https://example.com"
+                      />
+                    </div>
+                    <div>
+                      <Label>Tax ID / EIN</Label>
+                      <Input
+                        value={editClientForm.taxIdentifier}
+                        onChange={(e) =>
+                          setEditClientForm({ ...editClientForm, taxIdentifier: e.target.value })
+                        }
+                        placeholder="US-EIN-12-3456789"
+                      />
+                    </div>
+                    <div>
+                      <Label>Payment Terms (Days)</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        max="365"
+                        value={editClientForm.paymentTermsDays}
+                        onChange={(e) =>
+                          setEditClientForm({
+                            ...editClientForm,
+                            paymentTermsDays: Number(e.target.value),
+                          })
+                        }
+                        required
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <Label>Address Line 1</Label>
+                      <Input
+                        value={editClientForm.line1}
+                        onChange={(e) =>
+                          setEditClientForm({ ...editClientForm, line1: e.target.value })
+                        }
+                        placeholder="100 Main Street, Suite 400"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label>City</Label>
+                      <Input
+                        value={editClientForm.city}
+                        onChange={(e) =>
+                          setEditClientForm({ ...editClientForm, city: e.target.value })
+                        }
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label>State / Province</Label>
+                      <Input
+                        value={editClientForm.state}
+                        onChange={(e) =>
+                          setEditClientForm({ ...editClientForm, state: e.target.value })
+                        }
+                        placeholder="CA, NY, TX..."
+                      />
+                    </div>
+                    <div>
+                      <Label>Postal / ZIP Code</Label>
+                      <Input
+                        value={editClientForm.postalCode}
+                        onChange={(e) =>
+                          setEditClientForm({ ...editClientForm, postalCode: e.target.value })
+                        }
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label>Country Code (2-letter ISO)</Label>
+                      <Input
+                        value={editClientForm.country}
+                        onChange={(e) =>
+                          setEditClientForm({ ...editClientForm, country: e.target.value.toUpperCase() })
+                        }
+                        maxLength={2}
+                        required
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <Label>Client Internal Notes</Label>
+                      <Input
+                        value={editClientForm.notes}
+                        onChange={(e) =>
+                          setEditClientForm({ ...editClientForm, notes: e.target.value })
+                        }
+                        placeholder="Key account, special invoicing instructions..."
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2 pt-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setEditClientModalOpen(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button type="submit" variant="primary">
+                      Save Client Changes
+                    </Button>
+                  </div>
+                </form>
+              </DialogModal>
+            </Dialog>
 
             {/* Clients CSV Import Modal */}
             <Dialog open={clientImportModalOpen} onOpenChange={setClientImportModalOpen}>

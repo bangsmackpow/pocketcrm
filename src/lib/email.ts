@@ -226,7 +226,7 @@ export async function sendDocumentEmail(options: SendDocumentEmailOptions): Prom
   }
 
   // Generate PDF attachment
-  const pdfBuffer = generateDocumentPdfBuffer(ctx);
+  const pdfBuffer = await generateDocumentPdfBuffer(ctx);
   const pdfBase64 = Buffer.from(pdfBuffer).toString('base64');
   const filename = `${doc.documentNumber}.pdf`;
 
