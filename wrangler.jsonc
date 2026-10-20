@@ -16,13 +16,13 @@
   },
   "vars": {
     "APP_NAME": "PocketCRM",
-    "BETTER_AUTH_URL": "http://localhost:5173"
+    "BETTER_AUTH_URL": "https://pocketcrm.curtislamasters.workers.dev"
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "pocketcrm-db",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "c63bee65-0dcd-4268-a2fb-0a4ef39970e9",
       "migrations_dir": "src/db/migrations"
     }
   ],
