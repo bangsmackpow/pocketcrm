@@ -2711,17 +2711,21 @@ export function App() {
                       </p>
                     </div>
 
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={() => {
-                        setNewUserData({ name: '', email: '', password: '', role: 'member' });
-                        setNewUserModalOpen(true);
-                      }}
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      New User
-                    </Button>
+                    {currentUser.role === 'admin' ? (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => {
+                          setNewUserData({ name: '', email: '', password: '', role: 'member' });
+                          setNewUserModalOpen(true);
+                        }}
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        New User
+                      </Button>
+                    ) : (
+                      <span className="text-xs text-slate-500 italic">Admin role required to manage users</span>
+                    )}
                   </div>
 
                   <div className="overflow-x-auto">
@@ -2766,51 +2770,55 @@ export function App() {
                               </span>
                             </td>
                             <td className="py-3 px-3 text-right">
-                              <div className="inline-flex items-center gap-1.5 justify-end">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    setEditingUser(user);
-                                    setEditUserData({
-                                      name: user.name,
-                                      email: user.email,
-                                      role: user.role,
-                                      banned: Boolean(user.banned),
-                                    });
-                                    setEditUserModalOpen(true);
-                                  }}
-                                  title="Edit user info"
-                                >
-                                  <Edit2 className="w-3 h-3" />
-                                  Edit
-                                </Button>
-
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  onClick={() => {
-                                    setResetPwUser(user);
-                                    setNewPasswordInput('');
-                                    setResetPwModalOpen(true);
-                                  }}
-                                  title="Reset user password"
-                                >
-                                  <Lock className="w-3 h-3 text-amber-600 dark:text-amber-400" />
-                                  Reset PW
-                                </Button>
-
-                                {currentUser.role === 'admin' && user.id !== currentUser.id && (
-                                  <button
-                                    type="button"
-                                    onClick={() => void handleDeleteUser(user)}
-                                    className="text-rose-600 dark:text-rose-400 hover:text-rose-700 p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                                    title="Delete user"
+                              {currentUser.role === 'admin' ? (
+                                <div className="inline-flex items-center gap-1.5 justify-end">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                      setEditingUser(user);
+                                      setEditUserData({
+                                        name: user.name,
+                                        email: user.email,
+                                        role: user.role,
+                                        banned: Boolean(user.banned),
+                                      });
+                                      setEditUserModalOpen(true);
+                                    }}
+                                    title="Edit user info"
                                   >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                              </div>
+                                    <Edit2 className="w-3 h-3" />
+                                    Edit
+                                  </Button>
+
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    onClick={() => {
+                                      setResetPwUser(user);
+                                      setNewPasswordInput('');
+                                      setResetPwModalOpen(true);
+                                    }}
+                                    title="Reset user password"
+                                  >
+                                    <Lock className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                                    Reset PW
+                                  </Button>
+
+                                  {user.id !== currentUser.id && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleDeleteUser(user)}
+                                      className="text-rose-600 dark:text-rose-400 hover:text-rose-700 p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                                      title="Delete user"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-xs text-slate-400 italic">Read-only</span>
+                              )}
                             </td>
                           </tr>
                         ))}

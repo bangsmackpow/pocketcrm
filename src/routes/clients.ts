@@ -6,6 +6,7 @@ import Papa from 'papaparse';
 import { clients, documents } from '../db/schema';
 import { requireRole, type AppEnv } from '../lib/auth';
 import { recordAuditLog } from '../lib/audit';
+import { rateLimit } from '../lib/rate-limit';
 import { putCsvImportBackup } from '../lib/r2';
 
 export const clientRoutes = new Hono<AppEnv>();
@@ -78,11 +79,14 @@ clientRoutes.get('/template', requireRole('viewer'), (c) => {
 });
 
 /**
- * List all clients with optional search filter
+ * List clients with optional search filter and capped pagination
  */
 clientRoutes.get('/', requireRole('viewer'), async (c) => {
   const db = c.get('db');
   const q = c.req.query('q')?.trim();
+  const page = Math.max(1, parseInt(c.req.query('page') || '1', 10));
+  const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '100', 10)));
+  const offset = (page - 1) * limit;
 
   const rows = q
     ? await db
@@ -97,9 +101,23 @@ clientRoutes.get('/', requireRole('viewer'), async (c) => {
           )
         )
         .orderBy(desc(clients.createdAt))
-    : await db.select().from(clients).orderBy(desc(clients.createdAt));
+        .limit(limit)
+        .offset(offset)
+    : await db
+        .select()
+        .from(clients)
+        .orderBy(desc(clients.createdAt))
+        .limit(limit)
+        .offset(offset);
 
-  return c.json({ clients: rows });
+  return c.json({
+    clients: rows,
+    pagination: {
+      page,
+      limit,
+      count: rows.length,
+    },
+  });
 });
 
 /**
@@ -128,11 +146,23 @@ clientRoutes.get('/:id', requireRole('viewer'), async (c) => {
 
 /**
  * Bulk Import Clients from CSV with PapaParse, Zod, and Atomic D1 Batch
+ * Protected by payload length bounds (5MB) and rate limiting
  */
 clientRoutes.post(
   '/import-csv',
   requireRole('member'),
-  zValidator('json', z.object({ csvText: z.string().min(1) })),
+  rateLimit({
+    windowMs: 60_000,
+    max: 5,
+    keyPrefix: 'client_import_csv',
+    message: 'Client CSV import rate limit reached. Please wait 1 minute before importing more clients.',
+  }),
+  zValidator(
+    'json',
+    z.object({
+      csvText: z.string().min(1, 'CSV content cannot be empty').max(5_000_000, 'CSV content exceeds 5MB limit'),
+    })
+  ),
   async (c) => {
     const db = c.get('db');
     const user = c.get('user');

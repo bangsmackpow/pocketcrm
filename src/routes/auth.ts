@@ -8,6 +8,7 @@ import {
   requireRole,
   type AppEnv,
 } from '../lib/auth';
+import { rateLimit } from '../lib/rate-limit';
 import { users, accounts, auditLogs } from '../db/schema';
 import { recordAuditLog } from '../lib/audit';
 
@@ -58,7 +59,7 @@ authRoutes.get('/users', requireRole('member'), async (c) => {
 });
 
 /**
- * User Manager: Create new managed user (Admin & Member/Manager access)
+ * User Manager: Create new managed user (Admin only)
  */
 const createUserSchema = z.object({
   name: z.string().trim().min(1, 'Name is required'),
@@ -69,7 +70,7 @@ const createUserSchema = z.object({
 
 authRoutes.post(
   '/users',
-  requireRole('member'),
+  requireRole('admin'),
   zValidator('json', createUserSchema),
   async (c) => {
     const db = c.get('db');
@@ -139,7 +140,7 @@ const updateUserSchema = z.object({
 
 authRoutes.put(
   '/users/:id',
-  requireRole('member'),
+  requireRole('admin'),
   zValidator('json', updateUserSchema),
   async (c) => {
     const db = c.get('db');
@@ -150,6 +151,16 @@ authRoutes.put(
     const [existing] = await db.select().from(users).where(eq(users.id, id)).limit(1);
     if (!existing) {
       return c.json({ error: 'User not found' }, 404);
+    }
+
+    // Safety: Prevent an admin from demoting or banning their own active account
+    if (actor?.id === id) {
+      if (body.role && body.role !== 'admin') {
+        return c.json({ error: 'SelfDemotionForbidden', message: 'You cannot revoke your own administrator privileges.' }, 400);
+      }
+      if (body.banned === true) {
+        return c.json({ error: 'SelfBanForbidden', message: 'You cannot ban your own active account.' }, 400);
+      }
     }
 
     const [updated] = await db
@@ -178,7 +189,7 @@ authRoutes.put(
 );
 
 /**
- * User Manager: Reset user password
+ * User Manager: Reset user password (Admin only)
  */
 const resetPasswordSchema = z.object({
   newPassword: z.string().min(8, 'Password must be at least 8 characters'),
@@ -186,7 +197,7 @@ const resetPasswordSchema = z.object({
 
 authRoutes.post(
   '/users/:id/reset-password',
-  requireRole('member'),
+  requireRole('admin'),
   zValidator('json', resetPasswordSchema),
   async (c) => {
     const db = c.get('db');
@@ -279,6 +290,23 @@ authRoutes.get('/audit-logs', requireRole('viewer'), async (c) => {
 
   return c.json({ auditLogs: logs });
 });
+
+/**
+ * Rate-limited Sign-In Route (Prevents credential stuffing & brute-force attacks)
+ */
+authRoutes.post(
+  '/sign-in/email',
+  rateLimit({
+    windowMs: 60_000,
+    max: 5,
+    keyPrefix: 'auth_login',
+    message: 'Too many failed login attempts. Please wait 1 minute before trying again.',
+  }),
+  async (c) => {
+    const auth = createAuth(c.env);
+    return auth.handler(c.req.raw);
+  }
+);
 
 /**
  * Delegate standard Better Auth endpoints:

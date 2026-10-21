@@ -18,16 +18,29 @@ const itemSchema = z.object({
 });
 
 /**
- * List all catalog items (all authenticated users with viewer role)
+ * List all catalog items with capped pagination
  */
 itemRoutes.get('/', requireRole('viewer'), async (c) => {
   const db = c.get('db');
+  const page = Math.max(1, parseInt(c.req.query('page') || '1', 10));
+  const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '100', 10)));
+  const offset = (page - 1) * limit;
+
   const items = await db
     .select()
     .from(catalogItems)
-    .orderBy(asc(catalogItems.name));
+    .orderBy(asc(catalogItems.name))
+    .limit(limit)
+    .offset(offset);
 
-  return c.json({ items });
+  return c.json({
+    items,
+    pagination: {
+      page,
+      limit,
+      count: items.length,
+    },
+  });
 });
 
 /**

@@ -40,6 +40,13 @@ export type AppEnv = {
 export function createAuth(env: CloudflareBindings) {
   const db = createD1Client(env.DB);
 
+  const secret = env.BETTER_AUTH_SECRET;
+  if (!secret) {
+    console.warn(
+      '[SECURITY WARNING] BETTER_AUTH_SECRET is not configured in worker environment. Set it via "wrangler secret put BETTER_AUTH_SECRET" for cryptographic signing safety.'
+    );
+  }
+
   return betterAuth({
     database: drizzleAdapter(db, {
       provider: 'sqlite',
@@ -50,7 +57,7 @@ export function createAuth(env: CloudflareBindings) {
         verification: schema.verifications,
       },
     }),
-    secret: env.BETTER_AUTH_SECRET || 'pocketcrm-edge-secret-key-minimum-32-chars-2026',
+    secret: secret || 'pocketcrm-edge-secret-key-minimum-32-chars-2026',
     baseURL: env.BETTER_AUTH_URL || 'https://pocketcrm.builtnetworks.com',
     trustedOrigins: [
       'https://pocketcrm.builtnetworks.com',
@@ -73,7 +80,7 @@ export function createAuth(env: CloudflareBindings) {
           type: 'string',
           required: false,
           defaultValue: 'member',
-          input: true,
+          input: false, // Disallow client-side role assignment; roles must be managed via admin D1 mutations
         },
         banned: {
           type: 'boolean',

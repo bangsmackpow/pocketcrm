@@ -408,17 +408,40 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
         const base64 = template.logoUrl.replace(/^data:image\/(jpeg|jpg);base64,/, '');
         const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
         logoImage = await pdfDoc.embedJpg(bytes);
-      } else if (template.logoUrl.startsWith('http://') || template.logoUrl.startsWith('https://')) {
-        const resp = await fetch(template.logoUrl);
-        if (resp.ok) {
-          const ab = await resp.arrayBuffer();
-          const bytes = new Uint8Array(ab);
-          const ctype = resp.headers.get('content-type') || '';
-          if (ctype.includes('jpeg') || ctype.includes('jpg')) {
-            logoImage = await pdfDoc.embedJpg(bytes);
-          } else {
-            logoImage = await pdfDoc.embedPng(bytes);
+      } else if (template.logoUrl.startsWith('https://') || template.logoUrl.startsWith('http://')) {
+        try {
+          const parsedUrl = new URL(template.logoUrl);
+          const hostname = parsedUrl.hostname.toLowerCase();
+
+          // Block internal/private network IP ranges to prevent SSRF
+          const isPrivateIp =
+            hostname === 'localhost' ||
+            hostname === '127.0.0.1' ||
+            hostname === '0.0.0.0' ||
+            hostname === '169.254.169.254' ||
+            hostname.startsWith('10.') ||
+            hostname.startsWith('192.168.') ||
+            /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname) ||
+            hostname.endsWith('.internal') ||
+            hostname.endsWith('.local');
+
+          if (!isPrivateIp) {
+            const resp = await fetch(template.logoUrl, {
+              signal: AbortSignal.timeout(4000),
+            });
+            if (resp.ok) {
+              const ab = await resp.arrayBuffer();
+              const bytes = new Uint8Array(ab);
+              const ctype = resp.headers.get('content-type') || '';
+              if (ctype.includes('jpeg') || ctype.includes('jpg')) {
+                logoImage = await pdfDoc.embedJpg(bytes);
+              } else if (ctype.includes('png')) {
+                logoImage = await pdfDoc.embedPng(bytes);
+              }
+            }
           }
+        } catch {
+          logoImage = null;
         }
       }
     } catch {

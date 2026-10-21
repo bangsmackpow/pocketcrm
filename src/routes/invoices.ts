@@ -25,8 +25,15 @@ import {
 } from '../lib/r2';
 import { recordAuditLog } from '../lib/audit';
 import { sendDocumentEmail } from '../lib/email';
+import { rateLimit } from '../lib/rate-limit';
 
 export const invoiceRoutes = new Hono<AppEnv>();
+
+const sendEmailSchema = z.object({
+  recipientEmail: z.string().trim().email('Valid recipient email required').optional(),
+  subject: z.string().trim().max(200).optional(),
+  customMessage: z.string().trim().max(2000).optional(),
+});
 
 const lineItemSchema = z.object({
   name: z.string().trim().min(1, 'Item name is required'),
@@ -60,11 +67,14 @@ const createInvoiceSchema = z.object({
 });
 
 /**
- * List all invoices with client metadata
+ * List invoices with client metadata, status filtering, and capped pagination
  */
 invoiceRoutes.get('/', requireRole('viewer'), async (c) => {
   const db = c.get('db');
   const statusFilter = c.req.query('status') as InvoiceStatus | undefined;
+  const page = Math.max(1, parseInt(c.req.query('page') || '1', 10));
+  const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '100', 10)));
+  const offset = (page - 1) * limit;
 
   const rows = await db
     .select({
@@ -84,13 +94,20 @@ invoiceRoutes.get('/', requireRole('viewer'), async (c) => {
         ? and(eq(documents.type, 'invoice'), eq(documents.status, statusFilter))
         : eq(documents.type, 'invoice')
     )
-    .orderBy(desc(documents.issueDate), desc(documents.createdAt));
+    .orderBy(desc(documents.issueDate), desc(documents.createdAt))
+    .limit(limit)
+    .offset(offset);
 
   return c.json({
     invoices: rows.map((r) => ({
       ...r.document,
       client: r.client,
     })),
+    pagination: {
+      page,
+      limit,
+      count: rows.length,
+    },
   });
 });
 
@@ -144,6 +161,24 @@ invoiceRoutes.post(
     const user = c.get('user');
     const body = c.req.valid('json');
     const now = new Date();
+
+    // Idempotency / Duplicate Check
+    const [existingDoc] = await db
+      .select({ id: documents.id, documentNumber: documents.documentNumber })
+      .from(documents)
+      .where(eq(documents.documentNumber, body.documentNumber))
+      .limit(1);
+
+    if (existingDoc) {
+      return c.json(
+        {
+          error: 'DocumentNumberConflict',
+          message: `Invoice number "${body.documentNumber}" already exists. Please choose a unique document number or verify if it was already created.`,
+        },
+        409
+      );
+    }
+
     const docId = `doc_inv_${crypto.randomUUID().slice(0, 12)}`;
 
     const calc = calculateDocumentTotals(
@@ -649,17 +684,22 @@ invoiceRoutes.get('/:id/pdf', requireRole('viewer'), async (c) => {
 
 /**
  * Send invoice to client via Cloudflare Native Email
+ * Protected by schema validation and per-minute rate limiting
  */
-invoiceRoutes.post('/:id/send', requireRole('member'), async (c) => {
-  const db = c.get('db');
-  const id = c.req.param('id');
-
-  const body = await c.req.json().catch(() => ({}));
-  const { recipientEmail, subject, customMessage } = body as {
-    recipientEmail?: string;
-    subject?: string;
-    customMessage?: string;
-  };
+invoiceRoutes.post(
+  '/:id/send',
+  requireRole('member'),
+  rateLimit({
+    windowMs: 60_000,
+    max: 10,
+    keyPrefix: 'inv_email_send',
+    message: 'Invoice email dispatch rate limit reached. Please wait 1 minute before sending more invoices.',
+  }),
+  zValidator('json', sendEmailSchema),
+  async (c) => {
+    const db = c.get('db');
+    const id = c.req.param('id');
+    const { recipientEmail, subject, customMessage } = c.req.valid('json');
 
   const [doc] = await db
     .select()

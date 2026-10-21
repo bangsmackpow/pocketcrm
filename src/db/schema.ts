@@ -291,7 +291,10 @@ export const documentItems = sqliteTable(
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
   },
-  (table) => [index('document_items_doc_id_idx').on(table.documentId)]
+  (table) => [
+    index('document_items_doc_id_idx').on(table.documentId),
+    index('document_items_doc_sort_idx').on(table.documentId, table.sortOrder),
+  ]
 );
 
 // ============================================================================
@@ -315,6 +318,7 @@ export const auditLogs = sqliteTable(
   },
   (table) => [
     index('audit_logs_entity_idx').on(table.entityType, table.entityId),
+    index('audit_logs_action_idx').on(table.action),
     index('audit_logs_created_at_idx').on(table.createdAt),
   ]
 );

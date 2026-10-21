@@ -9,6 +9,7 @@ import {
   type DocumentType,
 } from '../db/schema';
 import { requireRole, type AppEnv } from '../lib/auth';
+import { rateLimit } from '../lib/rate-limit';
 import {
   parseAndValidateDocumentsCsv,
   SAMPLE_CSV_TEMPLATE,
@@ -48,7 +49,7 @@ importRoutes.get('/template', requireRole('viewer'), (c) => {
 });
 
 const csvImportRequestSchema = z.object({
-  csvText: z.string().min(1, 'CSV content cannot be empty'),
+  csvText: z.string().min(1, 'CSV content cannot be empty').max(5_000_000, 'CSV content exceeds 5MB limit'),
   defaultDocumentType: z.enum(['invoice', 'estimate']).optional().default('invoice'),
   dryRun: z.boolean().optional().default(false),
   autoCreateMissingClients: z.boolean().optional().default(false),
@@ -65,6 +66,12 @@ const csvImportRequestSchema = z.object({
 importRoutes.post(
   '/csv',
   requireRole('member'),
+  rateLimit({
+    windowMs: 60_000,
+    max: 5,
+    keyPrefix: 'docs_import_csv',
+    message: 'CSV import rate limit reached. Please wait 1 minute before importing more documents.',
+  }),
   zValidator('json', csvImportRequestSchema),
   async (c) => {
     const db = c.get('db');
