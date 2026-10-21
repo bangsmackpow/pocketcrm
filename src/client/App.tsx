@@ -32,6 +32,8 @@ import {
   Send,
   ArrowLeft,
   Check,
+  Smartphone,
+  Phone,
 } from 'lucide-react';
 import {
   Button,
@@ -230,6 +232,12 @@ export function App() {
   const [deleteDocSubmitting, setDeleteDocSubmitting] = useState(false);
   const [deleteDocError, setDeleteDocError] = useState<string | null>(null);
 
+  // PWA Install Prompt State
+  const [pwaPrompt, setPwaPrompt] = useState<any>(null);
+  const [isPwaInstalled, setIsPwaInstalled] = useState(false);
+  const [dismissInstallBanner, setDismissInstallBanner] = useState(false);
+  const [mobileFabMenuOpen, setMobileFabMenuOpen] = useState(false);
+
   // Page View State: 'tabs' (standard views) vs 'composer' (dedicated full-page document editor)
   const [pageView, setPageView] = useState<'tabs' | 'composer'>('tabs');
   const [returnTab, setReturnTab] = useState<string>('invoices');
@@ -285,6 +293,35 @@ export function App() {
   const notify = (type: 'success' | 'error', text: string) => {
     setBannerMsg({ type, text });
     setTimeout(() => setBannerMsg(null), 5000);
+  };
+
+  // Detect PWA Standalone Mode & Capture Install Prompt
+  useEffect(() => {
+    const isStandalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      (window.navigator as any).standalone === true;
+    setIsPwaInstalled(isStandalone);
+
+    const handleBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      setPwaPrompt(e);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+  }, []);
+
+  const handleInstallPwa = async () => {
+    if (!pwaPrompt) {
+      notify('success', 'To install on iOS: Tap the Share button in Safari, then tap "Add to Home Screen".');
+      return;
+    }
+    pwaPrompt.prompt();
+    const choice = await pwaPrompt.userChoice;
+    if (choice?.outcome === 'accepted') {
+      setIsPwaInstalled(true);
+      setPwaPrompt(null);
+    }
   };
 
   const checkAuth = useCallback(async () => {
@@ -1248,6 +1285,36 @@ export function App() {
               )}
             </button>
 
+            {/* PWA Install Button (Desktop) */}
+            {!isPwaInstalled && (
+              <button
+                onClick={handleInstallPwa}
+                className="hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-blue-200 dark:border-blue-900/60 bg-blue-50 dark:bg-blue-950/40 px-2.5 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 cursor-pointer"
+                title="Install PocketCRM on your desktop or phone"
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                <span>Install App</span>
+              </button>
+            )}
+
+            {/* Mobile Admin Shortcut */}
+            {isManagerOrAdmin && (
+              <button
+                onClick={() => {
+                  setActiveTab('admin');
+                  setPageView('tabs');
+                }}
+                className={`sm:hidden flex items-center justify-center p-2 rounded-lg border text-xs cursor-pointer ${
+                  activeTab === 'admin' && pageView === 'tabs'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'
+                    : 'border-slate-300 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300'
+                }`}
+                title="Admin Settings"
+              >
+                <Settings className="w-3.5 h-3.5" />
+              </button>
+            )}
+
             {/* Authenticated User Pill */}
             <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-100 px-3 py-1.5 dark:border-slate-800 dark:bg-slate-900">
               <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
@@ -1281,6 +1348,31 @@ export function App() {
         </div>
       </header>
 
+      {/* Mobile PWA Install Announcement Banner */}
+      {!isPwaInstalled && !dismissInstallBanner && (
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-2 text-xs flex items-center justify-between sm:hidden shadow-sm">
+          <div className="flex items-center gap-2 pr-2">
+            <Smartphone className="w-4 h-4 shrink-0 text-blue-200" />
+            <span className="font-medium">Install to your Home Screen for full-screen offline access.</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={handleInstallPwa}
+              className="px-2.5 py-1 bg-white text-blue-700 font-bold rounded-md text-[11px] hover:bg-blue-50 shadow-xs cursor-pointer"
+            >
+              Install
+            </button>
+            <button
+              onClick={() => setDismissInstallBanner(true)}
+              className="text-white/80 hover:text-white text-xs px-1 cursor-pointer"
+              aria-label="Dismiss banner"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Notification Banner */}
       {bannerMsg && (
         <div className="mx-auto max-w-7xl w-full px-4 sm:px-6 pt-4">
@@ -1310,11 +1402,11 @@ export function App() {
       )}
 
       {/* Main Workspace Navigation: Clean & Focused */}
-      <main className="mx-auto max-w-7xl w-full flex-1 px-4 sm:px-6 py-6">
+      <main className="mx-auto max-w-7xl w-full flex-1 px-4 sm:px-6 py-6 pb-28 sm:pb-8">
         {pageView !== 'composer' && (
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-            <TabsList>
+            <TabsList className="hidden sm:inline-flex">
               <TabsTrigger value="dashboard">
                 <LayoutDashboard className="w-3.5 h-3.5" />
                 Dashboard
@@ -1645,7 +1737,8 @@ export function App() {
                 </div>
               </div>
 
-              <div className="overflow-x-auto">
+              {/* Desktop Data Table */}
+              <div className="hidden sm:block overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 dark:border-slate-800 text-xs uppercase text-slate-500 dark:text-slate-400">
@@ -1697,6 +1790,76 @@ export function App() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+
+              {/* Mobile Responsive Client Cards */}
+              <div className="sm:hidden space-y-3">
+                {clients.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-slate-400 italic">No clients registered yet.</div>
+                ) : (
+                  clients.map((cli) => (
+                    <div
+                      key={cli.id}
+                      className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-2.5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/50">
+                          {cli.code}
+                        </span>
+                        <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                          Net {cli.paymentTermsDays}d ({cli.currency})
+                        </span>
+                      </div>
+
+                      <div>
+                        <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                          {cli.companyName}
+                        </h4>
+                        <div className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                          {cli.contactName}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800/80">
+                        {cli.email && (
+                          <a
+                            href={`mailto:${cli.email}`}
+                            className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline"
+                          >
+                            <Mail className="w-3 h-3" />
+                            <span className="truncate max-w-[200px]">{cli.email}</span>
+                          </a>
+                        )}
+                        {cli.phone && (
+                          <a
+                            href={`tel:${cli.phone}`}
+                            className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300 hover:underline"
+                          >
+                            <Phone className="w-3 h-3" />
+                            <span>{cli.phone}</span>
+                          </a>
+                        )}
+                        {cli.billingAddress?.city && (
+                          <span className="text-[11px] text-slate-400">
+                            📍 {cli.billingAddress.city}, {cli.billingAddress.state || cli.billingAddress.country}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800/80">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openEditClientModal(cli)}
+                          className="w-full justify-center gap-1.5"
+                        >
+                          <Edit2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                          Edit Client Details
+                        </Button>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </Card>
 
@@ -1964,7 +2127,8 @@ export function App() {
                 </div>
               </div>
 
-              <div className="overflow-x-auto">
+              {/* Desktop Estimates Table */}
+              <div className="hidden sm:block overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 dark:border-slate-800 text-xs uppercase text-slate-500 dark:text-slate-400">
@@ -2123,6 +2287,128 @@ export function App() {
                   </tbody>
                 </table>
               </div>
+
+              {/* Mobile Responsive Estimates Cards */}
+              <div className="sm:hidden space-y-3">
+                {estimates.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-slate-400 italic">No estimates or quotes created yet.</div>
+                ) : (
+                  estimates.map((est) => (
+                    <div
+                      key={est.id}
+                      className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200">
+                            {est.documentNumber}
+                          </span>
+                          <StatusBadge status={est.status} />
+                        </div>
+                        <span className="text-[11px] text-slate-500">
+                          Expires {est.dueDate}
+                        </span>
+                      </div>
+
+                      <div className="flex items-baseline justify-between pt-1">
+                        <div>
+                          <div className="text-sm font-bold text-slate-900 dark:text-white">
+                            {est.client?.companyName}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            Issued: {est.issueDate}
+                          </div>
+                        </div>
+                        <div className="text-right font-extrabold text-sm text-slate-900 dark:text-white">
+                          {est.currency} ${est.total.toFixed(2)}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100 dark:border-slate-800/80">
+                        {est.status === 'draft' && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => openSendEstimateModal(est)}
+                            className="flex-1 justify-center"
+                          >
+                            <Mail className="w-3.5 h-3.5" />
+                            Send
+                          </Button>
+                        )}
+                        {est.status === 'sent' && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="success"
+                              onClick={() => void handleEstimateStatusChange(est.id, 'approved')}
+                              className="flex-1 justify-center"
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="danger"
+                              onClick={() => void handleEstimateStatusChange(est.id, 'rejected')}
+                              className="flex-1 justify-center"
+                            >
+                              Reject
+                            </Button>
+                          </>
+                        )}
+                        {est.status === 'approved' && (
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            onClick={() => void handleConvertEstimate(est.id)}
+                            className="flex-1 justify-center"
+                          >
+                            <ArrowRightLeft className="w-3.5 h-3.5" />
+                            Convert to Invoice
+                          </Button>
+                        )}
+                        {est.status !== 'converted' && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void openEditEstimateModal(est)}
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                            Edit
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => openSendEstimateModal(est)}
+                        >
+                          <Mail className="w-3.5 h-3.5" />
+                          Email
+                        </Button>
+                        <a
+                          href={`/api/estimates/${est.id}/pdf`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 rounded-md border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-xs text-blue-600 dark:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        >
+                          <Download className="w-3 h-3" />
+                          PDF
+                        </a>
+                        {currentUser?.role === 'admin' && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openDeleteDocModal(est)}
+                            className="text-rose-600 dark:text-rose-400 hover:bg-rose-50"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </Card>
           </TabsContent>
 
@@ -2140,7 +2426,8 @@ export function App() {
                 </div>
               </div>
 
-              <div className="overflow-x-auto">
+              {/* Desktop Invoices Table */}
+              <div className="hidden sm:block overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 dark:border-slate-800 text-xs uppercase text-slate-500 dark:text-slate-400">
@@ -2302,6 +2589,128 @@ export function App() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+
+              {/* Mobile Responsive Invoices Cards */}
+              <div className="sm:hidden space-y-3">
+                {invoices.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-slate-400 italic">No invoices created yet.</div>
+                ) : (
+                  invoices.map((inv) => (
+                    <div
+                      key={inv.id}
+                      className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200">
+                            {inv.documentNumber}
+                          </span>
+                          <StatusBadge status={inv.status} />
+                        </div>
+                        <span className="text-[11px] text-slate-500">
+                          Due {inv.dueDate}
+                        </span>
+                      </div>
+
+                      <div className="flex items-baseline justify-between pt-1">
+                        <div>
+                          <div className="text-sm font-bold text-slate-900 dark:text-white">
+                            {inv.client?.companyName}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            Issued: {inv.issueDate}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm font-extrabold text-slate-900 dark:text-white">
+                            {inv.currency} ${inv.total.toFixed(2)}
+                          </div>
+                          {inv.amountDue > 0 ? (
+                            <div className="text-xs font-bold text-amber-600 dark:text-amber-400">
+                              Due: {inv.currency} ${inv.amountDue.toFixed(2)}
+                            </div>
+                          ) : (
+                            <div className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                              Paid in Full
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100 dark:border-slate-800/80">
+                        {inv.status === 'draft' && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => openSendInvoiceModal(inv)}
+                            className="flex-1 justify-center"
+                          >
+                            <Mail className="w-3.5 h-3.5" />
+                            Send
+                          </Button>
+                        )}
+                        {['sent', 'partial', 'overdue'].includes(inv.status) && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="success"
+                              onClick={() => void handleRecordPayment(inv)}
+                              className="flex-1 justify-center"
+                            >
+                              <DollarSign className="w-3 h-3" />
+                              Record Pay
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              onClick={() => void handleInvoiceStatusChange(inv.id, 'paid')}
+                            >
+                              Paid
+                            </Button>
+                          </>
+                        )}
+                        {inv.status !== 'paid' && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void openEditInvoiceModal(inv)}
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                            Edit
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => openSendInvoiceModal(inv)}
+                        >
+                          <Mail className="w-3.5 h-3.5" />
+                          Email
+                        </Button>
+                        <a
+                          href={`/api/invoices/${inv.id}/pdf`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 rounded-md border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-xs text-blue-600 dark:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        >
+                          <Download className="w-3 h-3" />
+                          PDF
+                        </a>
+                        {currentUser?.role === 'admin' && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openDeleteDocModal(inv)}
+                            className="text-rose-600 dark:text-rose-400 hover:bg-rose-50"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </Card>
           </TabsContent>
@@ -3823,6 +4232,157 @@ export function App() {
           </div>
         )}
       </main>
+
+      {/* 8. MOBILE BOTTOM NAVIGATION BAR & FAB QUICK ACTION */}
+      {pageView !== 'composer' && (
+        <>
+          {/* Quick Action FAB Bottom Sheet Modal */}
+          {mobileFabMenuOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-xs sm:hidden"
+                onClick={() => setMobileFabMenuOpen(false)}
+              />
+              <div className="fixed bottom-20 left-4 right-4 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 shadow-2xl space-y-2 sm:hidden max-w-sm mx-auto">
+                <div className="flex items-center justify-between px-2 pt-1 pb-1">
+                  <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Quick Actions</span>
+                  <button
+                    type="button"
+                    onClick={() => setMobileFabMenuOpen(false)}
+                    className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileFabMenuOpen(false);
+                    openCreateDocumentModal('invoice');
+                  }}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 active:bg-slate-200 text-left transition-colors cursor-pointer"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
+                    <FileText className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-slate-900 dark:text-white">New Invoice</div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">Bill client with tax, discount & Net 30 terms</div>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileFabMenuOpen(false);
+                    openCreateDocumentModal('estimate');
+                  }}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 active:bg-slate-200 text-left transition-colors cursor-pointer"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0">
+                    <Receipt className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-slate-900 dark:text-white">New Quote / Estimate</div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">Generate estimate for client approval</div>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileFabMenuOpen(false);
+                    setClientModalOpen(true);
+                  }}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 active:bg-slate-200 text-left transition-colors cursor-pointer"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-purple-100 dark:bg-purple-900/50 flex items-center justify-center text-purple-600 dark:text-purple-400 shrink-0">
+                    <Building2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-slate-900 dark:text-white">New Client</div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">Add client account to database</div>
+                  </div>
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Fixed Mobile Bottom Navigation Bar */}
+          <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 pb-safe sm:hidden shadow-lg">
+            <div className="grid grid-cols-5 items-center h-16 px-1 max-w-md mx-auto">
+              {/* 1. Dashboard */}
+              <button
+                type="button"
+                onClick={() => setActiveTab('dashboard')}
+                className={`flex flex-col items-center justify-center h-full transition-colors cursor-pointer ${
+                  activeTab === 'dashboard'
+                    ? 'text-blue-600 dark:text-blue-400 font-semibold'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                }`}
+              >
+                <LayoutDashboard className="w-5 h-5 mb-0.5" />
+                <span className="text-[10px] leading-tight">Home</span>
+              </button>
+
+              {/* 2. Invoices */}
+              <button
+                type="button"
+                onClick={() => setActiveTab('invoices')}
+                className={`flex flex-col items-center justify-center h-full transition-colors relative cursor-pointer ${
+                  activeTab === 'invoices'
+                    ? 'text-blue-600 dark:text-blue-400 font-semibold'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                }`}
+              >
+                <FileText className="w-5 h-5 mb-0.5" />
+                <span className="text-[10px] leading-tight">Invoices</span>
+                {invoices.length > 0 && (
+                  <span className="absolute top-2 right-4 w-2 h-2 rounded-full bg-blue-600 dark:bg-blue-400" />
+                )}
+              </button>
+
+              {/* 3. Center FAB (+) Button */}
+              <div className="flex items-center justify-center">
+                <button
+                  type="button"
+                  onClick={() => setMobileFabMenuOpen((prev) => !prev)}
+                  className="w-12 h-12 -mt-5 rounded-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white shadow-lg flex items-center justify-center transition-all focus:outline-none focus:ring-4 focus:ring-blue-500/30 cursor-pointer"
+                  aria-label="Create new document or client"
+                >
+                  <Plus className={`w-6 h-6 transition-transform duration-200 ${mobileFabMenuOpen ? 'rotate-45' : ''}`} />
+                </button>
+              </div>
+
+              {/* 4. Estimates */}
+              <button
+                type="button"
+                onClick={() => setActiveTab('estimates')}
+                className={`flex flex-col items-center justify-center h-full transition-colors cursor-pointer ${
+                  activeTab === 'estimates'
+                    ? 'text-blue-600 dark:text-blue-400 font-semibold'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                }`}
+              >
+                <Receipt className="w-5 h-5 mb-0.5" />
+                <span className="text-[10px] leading-tight">Quotes</span>
+              </button>
+
+              {/* 5. Clients */}
+              <button
+                type="button"
+                onClick={() => setActiveTab('clients')}
+                className={`flex flex-col items-center justify-center h-full transition-colors cursor-pointer ${
+                  activeTab === 'clients'
+                    ? 'text-blue-600 dark:text-blue-400 font-semibold'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                }`}
+              >
+                <Users className="w-5 h-5 mb-0.5" />
+                <span className="text-[10px] leading-tight">Clients</span>
+              </button>
+            </div>
+          </nav>
+        </>
+      )}
 
       {/* 7. NATIVE CLOUDFLARE EMAIL DISPATCH MODAL */}
       <Dialog open={emailModalOpen} onOpenChange={setEmailModalOpen}>

@@ -13,3 +13,17 @@ createRoot(rootElement).render(
     <App />
   </React.StrictMode>
 );
+
+// Register PWA Service Worker for offline resilience & fast caching
+if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then((reg) => {
+        console.log('[PocketCRM PWA] Service Worker registered with scope:', reg.scope);
+      })
+      .catch((err) => {
+        console.warn('[PocketCRM PWA] Service Worker registration failed:', err);
+      });
+  });
+}
