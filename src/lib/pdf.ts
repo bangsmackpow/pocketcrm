@@ -17,6 +17,7 @@ export interface DocumentRenderContext {
   client: ClientRecord;
   items: DocumentItemRecord[];
   template?: TemplateRecord | null;
+  storage?: R2Bucket | null;
 }
 
 const DEFAULT_STYLES: DocumentTemplateStyles = {
@@ -127,7 +128,7 @@ export function renderDocumentTemplateHtml(ctx: DocumentRenderContext): string {
   const logoPlacement = template?.logoPlacement ?? 'left';
   const companyHeader =
     template?.companyHeaderText ??
-    'PocketCRM Cloud Enterprise LLC\n742 Evergreen Terrace, Suite 400\nAustin, TX 78701';
+    'Built Networks LLC\nAustin, TX';
   const paymentInstructions =
     template?.paymentInstructions ??
     'Wire / ACH transfer due within terms. Please reference Document Number on remittance.';
@@ -284,7 +285,7 @@ export function renderDocumentTemplateHtml(ctx: DocumentRenderContext): string {
         ${
           template?.logoUrl
             ? `<img src="${escapeHtml(template.logoUrl)}" alt="Logo" style="max-height: 54px; max-width: 220px; object-fit: contain;" />`
-            : `<div class="brand-badge">POCKETCRM • ${escapeHtml(docTitle)}</div>`
+            : ''
         }
       </div>
       <div class="meta-grid">
@@ -385,7 +386,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
   const docTitle = doc.type === 'estimate' ? 'ESTIMATE / QUOTE' : 'INVOICE';
   const companyHeader =
     template?.companyHeaderText ??
-    'PocketCRM Cloud Enterprise LLC\n742 Evergreen Terrace, Suite 400\nAustin, TX 78701';
+    'Built Networks LLC\nAustin, TX';
   const paymentInstructions =
     template?.paymentInstructions ??
     'Wire / ACH transfer due within terms. Please reference Document Number on remittance.';
@@ -393,9 +394,33 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
     template?.footerLegalClause ??
     'Thank you for your business. Past-due balances are subject to a 1.5% monthly late fee.';
 
-  // Attempt to embed logo image if present
+  // Attempt to load and embed logo image from R2, data URL, or external source
   let logoImage: any = null;
-  if (template?.logoUrl) {
+
+  // 1. Load directly from Cloudflare R2 bucket if R2Key or storage path is available
+  if (ctx.storage) {
+    const r2Key = template?.logoR2Key || (template?.logoUrl?.startsWith('/api/storage/') ? template.logoUrl.replace(/^\/api\/storage\//, '') : null);
+    if (r2Key) {
+      try {
+        const obj = await ctx.storage.get(r2Key);
+        if (obj) {
+          const ab = await obj.arrayBuffer();
+          const bytes = new Uint8Array(ab);
+          const ctype = (obj.httpMetadata?.contentType || '').toLowerCase();
+          if (ctype.includes('jpeg') || ctype.includes('jpg')) {
+            logoImage = await pdfDoc.embedJpg(bytes);
+          } else {
+            logoImage = await pdfDoc.embedPng(bytes);
+          }
+        }
+      } catch (err) {
+        console.warn('[PDF Engine] R2 logo retrieval failed:', err);
+      }
+    }
+  }
+
+  // 2. Fall back to base64 data URL
+  if (!logoImage && template?.logoUrl?.startsWith('data:image/')) {
     try {
       if (template.logoUrl.startsWith('data:image/png;base64,')) {
         const base64 = template.logoUrl.replace('data:image/png;base64,', '');
@@ -408,40 +433,41 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
         const base64 = template.logoUrl.replace(/^data:image\/(jpeg|jpg);base64,/, '');
         const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
         logoImage = await pdfDoc.embedJpg(bytes);
-      } else if (template.logoUrl.startsWith('https://') || template.logoUrl.startsWith('http://')) {
-        try {
-          const parsedUrl = new URL(template.logoUrl);
-          const hostname = parsedUrl.hostname.toLowerCase();
+      }
+    } catch (err) {
+      console.warn('[PDF Engine] Data URL logo embedding failed:', err);
+    }
+  }
 
-          // Block internal/private network IP ranges to prevent SSRF
-          const isPrivateIp =
-            hostname === 'localhost' ||
-            hostname === '127.0.0.1' ||
-            hostname === '0.0.0.0' ||
-            hostname === '169.254.169.254' ||
-            hostname.startsWith('10.') ||
-            hostname.startsWith('192.168.') ||
-            /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname) ||
-            hostname.endsWith('.internal') ||
-            hostname.endsWith('.local');
+  // 3. Fall back to remote HTTPS fetch with SSRF guards & 4s timeout
+  if (!logoImage && template?.logoUrl && (template.logoUrl.startsWith('https://') || template.logoUrl.startsWith('http://'))) {
+    try {
+      const parsedUrl = new URL(template.logoUrl);
+      const hostname = parsedUrl.hostname.toLowerCase();
+      const isPrivateIp =
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        hostname === '0.0.0.0' ||
+        hostname === '169.254.169.254' ||
+        hostname.startsWith('10.') ||
+        hostname.startsWith('192.168.') ||
+        /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname) ||
+        hostname.endsWith('.internal') ||
+        hostname.endsWith('.local');
 
-          if (!isPrivateIp) {
-            const resp = await fetch(template.logoUrl, {
-              signal: AbortSignal.timeout(4000),
-            });
-            if (resp.ok) {
-              const ab = await resp.arrayBuffer();
-              const bytes = new Uint8Array(ab);
-              const ctype = resp.headers.get('content-type') || '';
-              if (ctype.includes('jpeg') || ctype.includes('jpg')) {
-                logoImage = await pdfDoc.embedJpg(bytes);
-              } else if (ctype.includes('png')) {
-                logoImage = await pdfDoc.embedPng(bytes);
-              }
-            }
+      if (!isPrivateIp) {
+        const resp = await fetch(template.logoUrl, {
+          signal: AbortSignal.timeout(4000),
+        });
+        if (resp.ok) {
+          const ab = await resp.arrayBuffer();
+          const bytes = new Uint8Array(ab);
+          const ctype = (resp.headers.get('content-type') || '').toLowerCase();
+          if (ctype.includes('jpeg') || ctype.includes('jpg')) {
+            logoImage = await pdfDoc.embedJpg(bytes);
+          } else if (ctype.includes('png')) {
+            logoImage = await pdfDoc.embedPng(bytes);
           }
-        } catch {
-          logoImage = null;
         }
       }
     } catch {
@@ -465,42 +491,23 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
     borderWidth: 1,
   });
 
-  // Top Left: Logo or Brand Badge
+  // Top Left: Logo (if uploaded, render crisp logo; if no logo, omit PocketCRM badge completely)
+  let compY = headerCardY + headerCardHeight - 24;
   if (logoImage) {
-    const scale = Math.min(180 / logoImage.width, 42 / logoImage.height, 1);
+    const scale = Math.min(180 / logoImage.width, 44 / logoImage.height, 1);
     const logoW = logoImage.width * scale;
     const logoH = logoImage.height * scale;
     currentPage.drawImage(logoImage, {
       x: marginX + 16,
-      y: headerCardY + headerCardHeight - 16 - logoH,
+      y: headerCardY + headerCardHeight - 14 - logoH,
       width: logoW,
       height: logoH,
     });
-  } else {
-    // Brand Badge Pill
-    const badgeW = 160;
-    const badgeH = 24;
-    const badgeX = marginX + 16;
-    const badgeY = headerCardY + headerCardHeight - 16 - badgeH;
-    currentPage.drawRectangle({
-      x: badgeX,
-      y: badgeY,
-      width: badgeW,
-      height: badgeH,
-      color: accentColor,
-    });
-    currentPage.drawText(`POCKETCRM • ${docTitle}`, {
-      x: badgeX + 10,
-      y: badgeY + 7,
-      font: fontBold,
-      size: 9,
-      color: whiteColor,
-    });
+    compY = headerCardY + headerCardHeight - 18 - logoH - 10;
   }
 
-  // Company info below logo
+  // Company info below logo (or at top left if no logo)
   const companyLines = companyHeader.split(/\r?\n/);
-  let compY = headerCardY + 36;
   for (const cLine of companyLines.slice(0, 3)) {
     if (!cLine.trim()) continue;
     currentPage.drawText(cLine.trim(), {

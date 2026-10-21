@@ -611,7 +611,7 @@ estimateRoutes.get('/:id/pdf', requireRole('viewer'), async (c) => {
     .where(eq(documentItems.documentId, doc.id))
     .orderBy(asc(documentItems.sortOrder));
 
-  const [template] = doc.templateId
+  let [template] = doc.templateId
     ? await db
         .select()
         .from(documentTemplates)
@@ -619,12 +619,22 @@ estimateRoutes.get('/:id/pdf', requireRole('viewer'), async (c) => {
         .limit(1)
     : [];
 
+  if (!template) {
+    const [defaultTpl] = await db
+      .select()
+      .from(documentTemplates)
+      .where(eq(documentTemplates.isDefault, true))
+      .limit(1);
+    template = defaultTpl;
+  }
+
   if (format === 'html') {
     const html = renderDocumentTemplateHtml({
       document: doc,
       client,
       items,
       template,
+      storage: c.env.STORAGE,
     });
     return c.html(html);
   }
@@ -634,6 +644,7 @@ estimateRoutes.get('/:id/pdf', requireRole('viewer'), async (c) => {
     client,
     items,
     template,
+    storage: c.env.STORAGE,
   });
 
   // Store generated PDF in R2 bucket if available
@@ -698,13 +709,22 @@ estimateRoutes.post(
     .where(eq(documentItems.documentId, doc.id))
     .orderBy(asc(documentItems.sortOrder));
 
-  const [template] = doc.templateId
+  let [template] = doc.templateId
     ? await db
         .select()
         .from(documentTemplates)
         .where(eq(documentTemplates.id, doc.templateId))
         .limit(1)
     : [];
+
+  if (!template) {
+    const [defaultTpl] = await db
+      .select()
+      .from(documentTemplates)
+      .where(eq(documentTemplates.isDefault, true))
+      .limit(1);
+    template = defaultTpl;
+  }
 
   const targetRecipient = (recipientEmail || client.email || '').trim();
   if (!targetRecipient) {

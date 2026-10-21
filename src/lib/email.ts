@@ -177,7 +177,7 @@ function buildDocumentEmailHtml(options: {
 
     <!-- Footer -->
     <div style="background: #f1f5f9; padding: 20px 32px; border-top: 1px solid #e2e8f0; text-align: center; font-size: 12px; color: #64748b;">
-      <div>Sent natively via PocketCRM Edge on Cloudflare Workers</div>
+      <div>Thank you for your business.</div>
       <div style="margin-top: 4px;">For billing inquiries, reply directly to this email.</div>
     </div>
 
@@ -226,7 +226,10 @@ export async function sendDocumentEmail(options: SendDocumentEmailOptions): Prom
   }
 
   // Generate PDF attachment
-  const pdfBuffer = await generateDocumentPdfBuffer(ctx);
+  const pdfBuffer = await generateDocumentPdfBuffer({
+    ...ctx,
+    storage: env.STORAGE,
+  });
   const pdfBase64 = Buffer.from(pdfBuffer).toString('base64');
   const filename = `${doc.documentNumber}.pdf`;
 
