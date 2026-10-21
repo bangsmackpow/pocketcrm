@@ -14,6 +14,7 @@ import { estimateRoutes } from './routes/estimates';
 import { importRoutes } from './routes/import';
 import { templateRoutes } from './routes/templates';
 import { itemRoutes } from './routes/items';
+import { reportRoutes } from './routes/reports';
 import {
   clients,
   documents,
@@ -226,6 +227,7 @@ app.route('/api/estimates', estimateRoutes);
 app.route('/api/import', importRoutes);
 app.route('/api/templates', templateRoutes);
 app.route('/api/items', itemRoutes);
+app.route('/api/reports', reportRoutes);
 
 // Fallback to Cloudflare Pages/Workers SPA static assets
 app.all('*', async (c) => {

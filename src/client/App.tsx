@@ -34,6 +34,12 @@ import {
   Check,
   Smartphone,
   Phone,
+  BarChart3,
+  TrendingUp,
+  Calendar,
+  MapPin,
+  Calculator,
+  PieChart,
 } from 'lucide-react';
 import {
   Button,
@@ -104,6 +110,62 @@ interface DashboardData {
   }>;
 }
 
+interface TaxReportSummary {
+  year: string;
+  basis: string;
+  summary: {
+    totalInvoiced: number;
+    totalCollected: number;
+    totalOutstanding: number;
+    totalRevenue: number;
+    inStateRevenue: number;
+    outOfStateRevenue: number;
+    iowaApportionmentPercentage: number;
+    taxableSales: number;
+    exemptSales: number;
+    totalTaxCollected: number;
+    stateTaxCollected: number;
+    localOptionTaxCollected: number;
+  };
+  quarters: Array<{
+    quarter: string;
+    label: string;
+    gross: number;
+    tax: number;
+    count: number;
+    iowaEstimatedVoucherDue: string;
+  }>;
+  arAging: {
+    current: { amount: number; count: number };
+    days1to30: { amount: number; count: number };
+    days31to60: { amount: number; count: number };
+    days61to90: { amount: number; count: number };
+    days90Plus: { amount: number; count: number };
+    invoices: Array<{
+      id: string;
+      documentNumber: string;
+      clientName: string;
+      issueDate: string;
+      dueDate: string;
+      amountDue: number;
+      daysPastDue: number;
+      status: string;
+    }>;
+  };
+  clients: Array<{
+    id: string;
+    code: string;
+    companyName: string;
+    contactName: string;
+    state: string;
+    isIowa: boolean;
+    totalPaid: number;
+    totalOutstanding: number;
+    totalTax: number;
+    invoiceCount: number;
+  }>;
+}
+
 export function App() {
   // Theme state: defaults to 'light'
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -127,6 +189,12 @@ export function App() {
   const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
   const [emailLogsData, setEmailLogsData] = useState<EmailLogsResponse | null>(null);
   const [emailLogsFilter, setEmailLogsFilter] = useState('');
+
+  // Financial Reports & Iowa State Tax Analytics State
+  const [reportYear, setReportYear] = useState<string>('all');
+  const [reportBasis, setReportBasis] = useState<'cash' | 'accrual'>('cash');
+  const [reportData, setReportData] = useState<TaxReportSummary | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [bannerMsg, setBannerMsg] = useState<{
     type: 'success' | 'error';
@@ -398,6 +466,24 @@ export function App() {
       void refreshWorkspace();
     }
   }, [currentUser, refreshWorkspace]);
+
+  const fetchReportData = useCallback(async (year: string, basis: 'cash' | 'accrual') => {
+    setReportLoading(true);
+    try {
+      const data = await apiFetch<TaxReportSummary>(`/api/reports/tax-summary?year=${year}&basis=${basis}`);
+      setReportData(data);
+    } catch (err) {
+      console.error('Failed to load tax & financial reports:', err);
+    } finally {
+      setReportLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (currentUser && activeTab === 'reports') {
+      void fetchReportData(reportYear, reportBasis);
+    }
+  }, [currentUser, activeTab, reportYear, reportBasis, fetchReportData]);
 
   // Auth Submit (Sign In Only)
   const handleAuthSubmit = async (e: React.FormEvent) => {
@@ -1315,6 +1401,22 @@ export function App() {
               </button>
             )}
 
+            {/* Mobile Reports Shortcut */}
+            <button
+              onClick={() => {
+                setActiveTab('reports');
+                setPageView('tabs');
+              }}
+              className={`sm:hidden flex items-center justify-center p-2 rounded-lg border text-xs cursor-pointer ${
+                activeTab === 'reports' && pageView === 'tabs'
+                  ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'
+                  : 'border-slate-300 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300'
+              }`}
+              title="Financial Reports & Taxes"
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+            </button>
+
             {/* Authenticated User Pill */}
             <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-100 px-3 py-1.5 dark:border-slate-800 dark:bg-slate-900">
               <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
@@ -1422,6 +1524,10 @@ export function App() {
               <TabsTrigger value="invoices">
                 <Receipt className="w-3.5 h-3.5" />
                 Invoices ({invoices.length})
+              </TabsTrigger>
+              <TabsTrigger value="reports">
+                <BarChart3 className="w-3.5 h-3.5" />
+                Tax & Reports
               </TabsTrigger>
               {isManagerOrAdmin && (
                 <TabsTrigger value="admin">
@@ -2715,7 +2821,447 @@ export function App() {
             </Card>
           </TabsContent>
 
-          {/* 5. CONSOLIDATED ADMIN & SETTINGS AREA */}
+          {/* 5. REPORTS & STATE TAX ANALYTICS TAB */}
+          <TabsContent value="reports" className="space-y-6">
+            {/* Report Controls Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                  <h2 className="text-lg font-black text-slate-900 dark:text-white">
+                    Financial Reports & Iowa State Tax Analytics
+                  </h2>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Cash vs. accrual accounting summaries, Iowa business apportionment, sales tax collections, quarterly estimated schedules, and A/R aging.
+                </p>
+              </div>
+
+              {/* Filter Controls: Year, Basis & 1-Click CPA Export */}
+              <div className="flex flex-wrap items-center gap-2.5">
+                {/* Year Filter */}
+                <div className="flex items-center rounded-lg border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 p-0.5 shadow-xs text-xs font-medium">
+                  {(['all', '2026', '2025'] as const).map((yr) => (
+                    <button
+                      key={yr}
+                      onClick={() => setReportYear(yr)}
+                      className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                        reportYear === yr
+                          ? 'bg-blue-600 text-white font-bold shadow-xs'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      {yr === 'all' ? 'All Time' : yr}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Basis Filter */}
+                <div className="flex items-center rounded-lg border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 p-0.5 shadow-xs text-xs font-medium">
+                  <button
+                    onClick={() => setReportBasis('cash')}
+                    className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                      reportBasis === 'cash'
+                        ? 'bg-emerald-600 text-white font-bold shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                    title="Income recognized upon payment collection"
+                  >
+                    Cash Basis
+                  </button>
+                  <button
+                    onClick={() => setReportBasis('accrual')}
+                    className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                      reportBasis === 'accrual'
+                        ? 'bg-emerald-600 text-white font-bold shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                    title="Income recognized upon invoice issue date"
+                  >
+                    Accrual Basis
+                  </button>
+                </div>
+
+                {/* 1-Click CPA Export Button */}
+                <a
+                  href={`/api/reports/tax-summary/export-csv?year=${reportYear}&basis=${reportBasis}`}
+                  download={`pocketcrm_tax_report_${reportYear}_${reportBasis}.csv`}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-xs font-semibold hover:bg-indigo-100 dark:hover:bg-indigo-900/60 shadow-xs cursor-pointer transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Export CPA Packet (CSV)</span>
+                </a>
+              </div>
+            </div>
+
+            {reportLoading ? (
+              <div className="flex flex-col items-center justify-center p-12 text-slate-500">
+                <RefreshCw className="w-6 h-6 animate-spin mb-2 text-blue-600" />
+                <span className="text-sm">Calculating tax summaries & apportionment...</span>
+              </div>
+            ) : reportData ? (
+              <>
+                {/* 1. Executive Summary Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <Card className="p-5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        {reportBasis === 'cash' ? 'Collected Revenue' : 'Gross Billed Revenue'}
+                      </span>
+                      <DollarSign className="w-4 h-4 text-blue-600" />
+                    </div>
+                    <div className="mt-2 text-2xl font-black text-slate-900 dark:text-white">
+                      ${reportData.summary.totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      ${reportData.summary.totalCollected.toLocaleString('en-US', { minimumFractionDigits: 2 })} collected • ${reportData.summary.totalOutstanding.toLocaleString('en-US', { minimumFractionDigits: 2 })} pending
+                    </div>
+                  </Card>
+
+                  <Card className="p-5 border-l-4 border-l-emerald-500">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Iowa In-State Receipts
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                        {reportData.summary.iowaApportionmentPercentage}% Factor
+                      </span>
+                    </div>
+                    <div className="mt-2 text-2xl font-black text-emerald-600 dark:text-emerald-400">
+                      ${reportData.summary.inStateRevenue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      Subject to Iowa income taxation (IA 1040 Sched C / 1120)
+                    </div>
+                  </Card>
+
+                  <Card className="p-5 border-l-4 border-l-purple-500">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Out-of-State Receipts
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300">
+                        {(100 - reportData.summary.iowaApportionmentPercentage).toFixed(1)}% Apportioned
+                      </span>
+                    </div>
+                    <div className="mt-2 text-2xl font-black text-purple-600 dark:text-purple-400">
+                      ${reportData.summary.outOfStateRevenue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      Excluded under Iowa single-sales-factor rules
+                    </div>
+                  </Card>
+
+                  <Card className="p-5 border-l-4 border-l-amber-500">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Sales Tax Collected
+                      </span>
+                      <Calculator className="w-4 h-4 text-amber-600" />
+                    </div>
+                    <div className="mt-2 text-2xl font-black text-amber-600 dark:text-amber-400">
+                      ${reportData.summary.totalTaxCollected.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      6% State: ${reportData.summary.stateTaxCollected.toFixed(2)} • 1% LOST: ${reportData.summary.localOptionTaxCollected.toFixed(2)}
+                    </div>
+                  </Card>
+                </div>
+
+                {/* 2. Iowa State Tax & Apportionment Detail Card */}
+                <Card className="p-5 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                        <MapPin className="w-4 h-4 text-emerald-600" />
+                        Iowa Department of Revenue (IDR) Apportionment & Sales Tax Filing Breakdown
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        Iowa uses a single-sales-factor gross receipts formula. Revenue earned from out-of-state clients reduces your Iowa net taxable business income.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Visual Apportionment Bar */}
+                  <div>
+                    <div className="flex justify-between text-xs font-semibold mb-1">
+                      <span className="text-emerald-700 dark:text-emerald-400">
+                        Iowa In-State: ${reportData.summary.inStateRevenue.toFixed(2)} ({reportData.summary.iowaApportionmentPercentage}%)
+                      </span>
+                      <span className="text-purple-700 dark:text-purple-400">
+                        Out-of-State: ${reportData.summary.outOfStateRevenue.toFixed(2)} ({(100 - reportData.summary.iowaApportionmentPercentage).toFixed(1)}%)
+                      </span>
+                    </div>
+                    <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-3 overflow-hidden flex">
+                      <div
+                        className="bg-emerald-500 h-full transition-all duration-500"
+                        style={{ width: `${reportData.summary.iowaApportionmentPercentage}%` }}
+                        title={`Iowa In-State: ${reportData.summary.iowaApportionmentPercentage}%`}
+                      />
+                      <div
+                        className="bg-purple-500 h-full transition-all duration-500"
+                        style={{ width: `${100 - reportData.summary.iowaApportionmentPercentage}%` }}
+                        title={`Out-of-State: ${(100 - reportData.summary.iowaApportionmentPercentage).toFixed(1)}%`}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Sales Tax Component Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2">
+                    <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                      <div className="text-[11px] font-semibold text-slate-500 uppercase">Gross Sales / Receipts</div>
+                      <div className="text-base font-bold text-slate-900 dark:text-white mt-0.5">
+                        ${reportData.summary.totalRevenue.toFixed(2)}
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">Total business receipts</div>
+                    </div>
+                    <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                      <div className="text-[11px] font-semibold text-slate-500 uppercase">Taxable Sales</div>
+                      <div className="text-base font-bold text-slate-900 dark:text-white mt-0.5">
+                        ${reportData.summary.taxableSales.toFixed(2)}
+                      </div>
+                      <div className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5">Sales with tax assessed</div>
+                    </div>
+                    <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                      <div className="text-[11px] font-semibold text-slate-500 uppercase">Exempt / Non-Taxable</div>
+                      <div className="text-base font-bold text-slate-900 dark:text-white mt-0.5">
+                        ${reportData.summary.exemptSales.toFixed(2)}
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">Out-of-state / exempt services</div>
+                    </div>
+                    <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60">
+                      <div className="text-[11px] font-semibold text-amber-800 dark:text-amber-300 uppercase">Total Sales Tax Due</div>
+                      <div className="text-base font-bold text-amber-700 dark:text-amber-200 mt-0.5">
+                        ${reportData.summary.totalTaxCollected.toFixed(2)}
+                      </div>
+                      <div className="text-[10px] text-amber-700/80 dark:text-amber-300/80 mt-0.5">
+                        6% State (${reportData.summary.stateTaxCollected.toFixed(2)}) + 1% LOST (${reportData.summary.localOptionTaxCollected.toFixed(2)})
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+
+                {/* 3. Quarterly Estimated Tax Schedule */}
+                <Card className="p-5 space-y-4">
+                  <div className="border-b border-slate-200 dark:border-slate-800 pb-3">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-blue-600" />
+                      Quarterly Estimated Tax Schedule (Iowa Form IA 1040ES / Federal 1040ES)
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      Quarterly breakdown of gross receipts and sales tax collected to compute quarterly estimated vouchers.
+                    </p>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-100 dark:bg-slate-900/80 text-slate-600 dark:text-slate-400 uppercase font-semibold">
+                        <tr>
+                          <th className="py-2.5 px-3">Quarter</th>
+                          <th className="py-2.5 px-3">Iowa Voucher Deadline</th>
+                          <th className="py-2.5 px-3 text-center">Invoices</th>
+                          <th className="py-2.5 px-3 text-right">Gross Receipts</th>
+                          <th className="py-2.5 px-3 text-right">Sales Tax Collected</th>
+                          <th className="py-2.5 px-3 text-right">Net Business Income</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                        {reportData.quarters.map((q) => (
+                          <tr key={q.quarter} className="hover:bg-slate-50 dark:hover:bg-slate-900/50">
+                            <td className="py-2.5 px-3 font-bold text-slate-900 dark:text-white">
+                              {q.label}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400 font-medium">
+                              {q.iowaEstimatedVoucherDue}
+                            </td>
+                            <td className="py-2.5 px-3 text-center text-slate-600 dark:text-slate-400">
+                              {q.count}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-semibold text-slate-900 dark:text-white">
+                              ${q.gross.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2.5 px-3 text-right text-amber-600 dark:text-amber-400">
+                              ${q.tax.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-bold text-emerald-600 dark:text-emerald-400">
+                              ${(q.gross - q.tax).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+
+                {/* 4. Accounts Receivable (A/R) Aging Summary */}
+                <Card className="p-5 space-y-4">
+                  <div className="border-b border-slate-200 dark:border-slate-800 pb-3">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4 text-rose-600" />
+                      Accounts Receivable (A/R) Aging Schedule
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      Real-time aging of outstanding customer balances across 30, 60, and 90+ day intervals.
+                    </p>
+                  </div>
+
+                  {/* 5-Bucket Visual Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60">
+                      <div className="text-[10px] font-bold uppercase text-emerald-800 dark:text-emerald-300">Current (Not Due)</div>
+                      <div className="text-base font-black text-emerald-700 dark:text-emerald-200 mt-1">
+                        ${reportData.arAging.current.amount.toFixed(2)}
+                      </div>
+                      <div className="text-[10px] text-emerald-700/80">{reportData.arAging.current.count} invoices</div>
+                    </div>
+                    <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/60">
+                      <div className="text-[10px] font-bold uppercase text-blue-800 dark:text-blue-300">1 – 30 Days Past</div>
+                      <div className="text-base font-black text-blue-700 dark:text-blue-200 mt-1">
+                        ${reportData.arAging.days1to30.amount.toFixed(2)}
+                      </div>
+                      <div className="text-[10px] text-blue-700/80">{reportData.arAging.days1to30.count} invoices</div>
+                    </div>
+                    <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60">
+                      <div className="text-[10px] font-bold uppercase text-amber-800 dark:text-amber-300">31 – 60 Days Past</div>
+                      <div className="text-base font-black text-amber-700 dark:text-amber-200 mt-1">
+                        ${reportData.arAging.days31to60.amount.toFixed(2)}
+                      </div>
+                      <div className="text-[10px] text-amber-700/80">{reportData.arAging.days31to60.count} invoices</div>
+                    </div>
+                    <div className="p-3 rounded-lg bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800/60">
+                      <div className="text-[10px] font-bold uppercase text-orange-800 dark:text-orange-300">61 – 90 Days Past</div>
+                      <div className="text-base font-black text-orange-700 dark:text-orange-200 mt-1">
+                        ${reportData.arAging.days61to90.amount.toFixed(2)}
+                      </div>
+                      <div className="text-[10px] text-orange-700/80">{reportData.arAging.days61to90.count} invoices</div>
+                    </div>
+                    <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/60 col-span-2 sm:col-span-1">
+                      <div className="text-[10px] font-bold uppercase text-rose-800 dark:text-rose-300">90+ Days Overdue</div>
+                      <div className="text-base font-black text-rose-700 dark:text-rose-200 mt-1">
+                        ${reportData.arAging.days90Plus.amount.toFixed(2)}
+                      </div>
+                      <div className="text-[10px] text-rose-700/80">{reportData.arAging.days90Plus.count} invoices</div>
+                    </div>
+                  </div>
+
+                  {/* Detailed Past-Due Invoices Table */}
+                  {reportData.arAging.invoices.length > 0 && (
+                    <div className="pt-2">
+                      <div className="text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">Itemized Outstanding Invoices</div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-100 dark:bg-slate-900/80 text-slate-600 dark:text-slate-400 uppercase font-semibold">
+                            <tr>
+                              <th className="py-2 px-3">Invoice #</th>
+                              <th className="py-2 px-3">Client</th>
+                              <th className="py-2 px-3">Issue Date</th>
+                              <th className="py-2 px-3">Due Date</th>
+                              <th className="py-2 px-3 text-center">Days Overdue</th>
+                              <th className="py-2 px-3 text-right">Amount Due</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                            {reportData.arAging.invoices.map((inv) => (
+                              <tr key={inv.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50">
+                                <td className="py-2 px-3 font-semibold text-slate-900 dark:text-white">
+                                  {inv.documentNumber}
+                                </td>
+                                <td className="py-2 px-3 text-slate-700 dark:text-slate-300">
+                                  {inv.clientName}
+                                </td>
+                                <td className="py-2 px-3 text-slate-500">
+                                  {inv.issueDate}
+                                </td>
+                                <td className="py-2 px-3 text-slate-500">
+                                  {inv.dueDate}
+                                </td>
+                                <td className="py-2 px-3 text-center font-bold text-rose-600 dark:text-rose-400">
+                                  {inv.daysPastDue > 0 ? `${inv.daysPastDue} days` : 'Current'}
+                                </td>
+                                <td className="py-2 px-3 text-right font-black text-slate-900 dark:text-white">
+                                  ${inv.amountDue.toFixed(2)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </Card>
+
+                {/* 5. Client Lifetime Value (LTV) & State Apportionment Table */}
+                <Card className="p-5 space-y-4">
+                  <div className="border-b border-slate-200 dark:border-slate-800 pb-3">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      <Users className="w-4 h-4 text-blue-600" />
+                      Customer Revenue & State Apportionment Register
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      Breakdown of all customer accounts by state, total historical revenue collected, and pending balances.
+                    </p>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-100 dark:bg-slate-900/80 text-slate-600 dark:text-slate-400 uppercase font-semibold">
+                        <tr>
+                          <th className="py-2.5 px-3">Client Code</th>
+                          <th className="py-2.5 px-3">Company Name</th>
+                          <th className="py-2.5 px-3">State</th>
+                          <th className="py-2.5 px-3 text-center">Invoices</th>
+                          <th className="py-2.5 px-3 text-right">Total Paid</th>
+                          <th className="py-2.5 px-3 text-right">Outstanding</th>
+                          <th className="py-2.5 px-3 text-right">Sales Tax Paid</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                        {reportData.clients.map((c) => (
+                          <tr key={c.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50">
+                            <td className="py-2.5 px-3 font-mono font-bold text-blue-600 dark:text-blue-400">
+                              {c.code}
+                            </td>
+                            <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-white">
+                              {c.companyName}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  c.isIowa
+                                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                    : 'bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300'
+                                }`}
+                              >
+                                {c.state} ({c.isIowa ? 'Iowa In-State' : 'Out-of-State'})
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-center text-slate-600 dark:text-slate-400">
+                              {c.invoiceCount}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-bold text-emerald-600 dark:text-emerald-400">
+                              ${c.totalPaid.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-semibold text-slate-700 dark:text-slate-300">
+                              ${c.totalOutstanding.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2.5 px-3 text-right text-slate-500">
+                              ${c.totalTax.toFixed(2)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              </>
+            ) : (
+              <Card className="p-8 text-center text-slate-500">
+                No financial report data found for this period.
+              </Card>
+            )}
+          </TabsContent>
+
+          {/* 6. CONSOLIDATED ADMIN & SETTINGS AREA */}
           {isManagerOrAdmin && (
             <TabsContent value="admin" className="space-y-6">
               {/* Clean Admin Sub-navigation Header */}
@@ -4300,6 +4846,23 @@ export function App() {
                   <div>
                     <div className="font-semibold text-slate-900 dark:text-white">New Client</div>
                     <div className="text-[11px] text-slate-500 dark:text-slate-400">Add client account to database</div>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileFabMenuOpen(false);
+                    setActiveTab('reports');
+                    setPageView('tabs');
+                  }}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 active:bg-slate-200 text-left transition-colors cursor-pointer"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-indigo-100 dark:bg-indigo-900/50 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+                    <BarChart3 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-slate-900 dark:text-white">Tax & Financial Reports</div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">View Iowa apportionment, sales tax & A/R aging</div>
                   </div>
                 </button>
               </div>
