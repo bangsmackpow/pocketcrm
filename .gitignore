@@ -7,4 +7,10 @@ dist/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+*.db
 .DS_Store
+
+# Legacy & migration artifacts (contains private customer PII/databases)
+docs/legacy/
+scripts/
+*.sql
