@@ -24,6 +24,7 @@ import {
   putDocumentAttachment,
 } from '../lib/r2';
 import { recordAuditLog } from '../lib/audit';
+import { recordEmailLog } from '../lib/email-log';
 import { sendDocumentEmail } from '../lib/email';
 import { rateLimit } from '../lib/rate-limit';
 
@@ -769,7 +770,37 @@ invoiceRoutes.post(
     customMessage,
   });
 
+  const user = c.get('user');
+  const senderEmail = c.env.EMAIL_FROM || 'invoicing@billing.builtnetworks.com';
+
   if (!emailResult.success) {
+    await recordEmailLog({
+      db,
+      documentId: doc.id,
+      documentNumber: doc.documentNumber,
+      documentType: 'invoice',
+      recipientEmail: targetRecipient,
+      recipientName: client.contactName || client.companyName,
+      senderEmail,
+      subject: subject || `[Invoice] #${doc.documentNumber}`,
+      status: 'failed',
+      errorMessage: emailResult.error || 'Failed to dispatch email',
+      user,
+    });
+
+    await recordAuditLog({
+      db,
+      user,
+      action: 'invoice.email_failed',
+      entityType: 'invoice',
+      entityId: doc.id,
+      metadata: {
+        documentNumber: doc.documentNumber,
+        recipient: targetRecipient,
+        error: emailResult.error,
+      },
+    });
+
     return c.json({ error: emailResult.error || 'Failed to dispatch email' }, 500);
   }
 
@@ -784,7 +815,20 @@ invoiceRoutes.post(
       .where(eq(documents.id, doc.id));
   }
 
-  const user = c.get('user');
+  await recordEmailLog({
+    db,
+    documentId: doc.id,
+    documentNumber: doc.documentNumber,
+    documentType: 'invoice',
+    recipientEmail: targetRecipient,
+    recipientName: client.contactName || client.companyName,
+    senderEmail,
+    subject: subject || `[Invoice] #${doc.documentNumber}`,
+    status: emailResult.simulated ? 'simulated' : 'delivered',
+    messageId: emailResult.messageId,
+    user,
+  });
+
   await recordAuditLog({
     db,
     user,

@@ -324,6 +324,39 @@ export const auditLogs = sqliteTable(
 );
 
 // ============================================================================
+// EMAIL DISPATCH LOGS (NATIVE CLOUDFLARE OUTBOX TRACKING)
+// ============================================================================
+
+export type EmailDispatchStatus = 'delivered' | 'simulated' | 'failed';
+
+export const emailLogs = sqliteTable(
+  'email_logs',
+  {
+    id: text('id').primaryKey(),
+    documentId: text('document_id').references(() => documents.id, { onDelete: 'set null' }),
+    documentNumber: text('document_number').notNull(),
+    documentType: text('document_type').$type<DocumentType>().notNull(),
+    recipientEmail: text('recipient_email').notNull(),
+    recipientName: text('recipient_name'),
+    senderEmail: text('sender_email').notNull(),
+    subject: text('subject').notNull(),
+    status: text('status').$type<EmailDispatchStatus>().notNull(),
+    messageId: text('message_id'),
+    errorMessage: text('error_message'),
+    actorEmail: text('actor_email'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (table) => [
+    index('email_logs_doc_idx').on(table.documentId),
+    index('email_logs_status_idx').on(table.status),
+    index('email_logs_recipient_idx').on(table.recipientEmail),
+    index('email_logs_created_at_idx').on(table.createdAt),
+  ]
+);
+
+// ============================================================================
 // RELATIONS
 // ============================================================================
 

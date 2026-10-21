@@ -63,12 +63,15 @@ import {
   uploadLogo,
   sendInvoiceEmail,
   sendEstimateEmail,
+  fetchEmailLogs,
   type AuthUser,
   type ManagedUser,
   type CatalogItem,
   type ClientDto,
   type DocumentDto,
   type TemplateDto,
+  type EmailLogDto,
+  type EmailLogsResponse,
 } from './api';
 import {
   calculateDocumentTotals,
@@ -108,8 +111,8 @@ export function App() {
 
   // Main navigation tab: 'dashboard' | 'clients' | 'estimates' | 'invoices' | 'admin'
   const [activeTab, setActiveTab] = useState('dashboard');
-  // Admin sub-tab: 'catalog' | 'templates' | 'users' | 'audits'
-  const [adminSubTab, setAdminSubTab] = useState('catalog');
+  // Admin sub-tab: 'catalog' | 'templates' | 'users' | 'emails' | 'audits'
+  const [adminSubTab, setAdminSubTab] = useState<'catalog' | 'templates' | 'users' | 'emails' | 'audits'>('catalog');
 
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [clients, setClients] = useState<ClientDto[]>([]);
@@ -118,6 +121,8 @@ export function App() {
   const [templates, setTemplates] = useState<TemplateDto[]>([]);
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
   const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
+  const [emailLogsData, setEmailLogsData] = useState<EmailLogsResponse | null>(null);
+  const [emailLogsFilter, setEmailLogsFilter] = useState('');
   const [loading, setLoading] = useState(false);
   const [bannerMsg, setBannerMsg] = useState<{
     type: 'success' | 'error';
@@ -300,7 +305,8 @@ export function App() {
         Promise<{ invoices: DocumentDto[] }>,
         Promise<{ templates: TemplateDto[] }>,
         Promise<CatalogItem[]>,
-        Promise<ManagedUser[]>
+        Promise<ManagedUser[]>,
+        Promise<EmailLogsResponse>
       ] = [
         apiFetch<DashboardData>('/api/dashboard'),
         apiFetch<{ clients: ClientDto[] }>('/api/clients'),
@@ -309,9 +315,12 @@ export function App() {
         apiFetch<{ templates: TemplateDto[] }>('/api/templates'),
         fetchCatalogItems(),
         isManagerOrAdmin ? fetchUsers() : Promise.resolve([]),
+        isManagerOrAdmin
+          ? fetchEmailLogs()
+          : Promise.resolve({ logs: [], summary: { total: 0, delivered: 0, simulated: 0, failed: 0 } }),
       ];
 
-      const [dashRes, cliRes, estRes, invRes, tplRes, itemsRes, usersRes] = await Promise.all(promises);
+      const [dashRes, cliRes, estRes, invRes, tplRes, itemsRes, usersRes, emailLogsRes] = await Promise.all(promises);
 
       setDashboard(dashRes);
       setClients(cliRes.clients || []);
@@ -320,6 +329,7 @@ export function App() {
       setTemplates(tplRes.templates || []);
       setCatalogItems(itemsRes || []);
       setManagedUsers(usersRes || []);
+      setEmailLogsData(emailLogsRes || null);
 
       if (cliRes.clients?.length && !docClientId) {
         setDocClientId(cliRes.clients[0].id);
@@ -1148,6 +1158,18 @@ export function App() {
 
   const isManagerOrAdmin = currentUser.role === 'admin' || currentUser.role === 'member';
 
+  const filteredEmailLogs = (emailLogsData?.logs || []).filter((log) => {
+    if (!emailLogsFilter.trim()) return true;
+    const q = emailLogsFilter.toLowerCase();
+    return (
+      log.documentNumber.toLowerCase().includes(q) ||
+      log.recipientEmail.toLowerCase().includes(q) ||
+      (log.recipientName && log.recipientName.toLowerCase().includes(q)) ||
+      log.subject.toLowerCase().includes(q) ||
+      log.status.toLowerCase().includes(q)
+    );
+  });
+
   // 3. Authenticated State: Clean, Streamlined Workspace
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors">
@@ -1944,15 +1966,27 @@ export function App() {
                         <td className="py-3 px-3 text-right">
                           <div className="inline-flex items-center gap-1.5 flex-wrap justify-end">
                             {est.status === 'draft' && (
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={() =>
-                                  void handleEstimateStatusChange(est.id, 'sent')
-                                }
-                              >
-                                Mark Sent
-                              </Button>
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => openSendEstimateModal(est)}
+                                  title="Review and dispatch estimate to client via email"
+                                >
+                                  <Mail className="w-3.5 h-3.5" />
+                                  Send Estimate
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    void handleEstimateStatusChange(est.id, 'sent')
+                                  }
+                                  title="Mark as sent manually without sending email"
+                                >
+                                  Mark Sent
+                                </Button>
+                              </>
                             )}
                             {est.status === 'sent' && (
                               <>
@@ -2100,15 +2134,27 @@ export function App() {
                         <td className="py-3 px-3 text-right">
                           <div className="inline-flex items-center gap-1.5 flex-wrap justify-end">
                             {inv.status === 'draft' && (
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={() =>
-                                  void handleInvoiceStatusChange(inv.id, 'sent')
-                                }
-                              >
-                                Send Invoice
-                              </Button>
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => openSendInvoiceModal(inv)}
+                                  title="Review and dispatch invoice to client via email"
+                                >
+                                  <Mail className="w-3.5 h-3.5" />
+                                  Send Invoice
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    void handleInvoiceStatusChange(inv.id, 'sent')
+                                  }
+                                  title="Mark as sent manually without sending email"
+                                >
+                                  Mark Sent
+                                </Button>
+                              </>
                             )}
                             {['sent', 'partial', 'overdue'].includes(inv.status) && (
                               <>
@@ -2253,6 +2299,18 @@ export function App() {
                   >
                     <Users className="w-3.5 h-3.5" />
                     Team & Users ({managedUsers.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAdminSubTab('emails')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all cursor-pointer ${
+                      adminSubTab === 'emails'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    Email Logs ({emailLogsData?.logs.length || 0})
                   </button>
                   <button
                     type="button"
@@ -3001,7 +3059,147 @@ export function App() {
                 </Card>
               )}
 
-              {/* Sub-view D: Audit Trail */}
+              {/* Sub-view D: Native Cloudflare Email Outbox Logs */}
+              {adminSubTab === 'emails' && (
+                <div className="space-y-4">
+                  {/* KPI Summary Cards */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <Card className="p-4 bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800">
+                      <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Dispatched</div>
+                      <div className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
+                        {emailLogsData?.summary.total ?? 0}
+                      </div>
+                    </Card>
+                    <Card className="p-4 bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/50">
+                      <div className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Delivered</div>
+                      <div className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 mt-1">
+                        {emailLogsData?.summary.delivered ?? 0}
+                      </div>
+                    </Card>
+                    <Card className="p-4 bg-blue-50/50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800/50">
+                      <div className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider">Simulated</div>
+                      <div className="text-2xl font-bold text-blue-700 dark:text-blue-300 mt-1">
+                        {emailLogsData?.summary.simulated ?? 0}
+                      </div>
+                    </Card>
+                    <Card className="p-4 bg-rose-50/50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800/50">
+                      <div className="text-xs font-semibold text-rose-600 dark:text-rose-400 uppercase tracking-wider">Failed / Rejected</div>
+                      <div className="text-2xl font-bold text-rose-700 dark:text-rose-300 mt-1">
+                        {emailLogsData?.summary.failed ?? 0}
+                      </div>
+                    </Card>
+                  </div>
+
+                  <Card className="p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                      <div>
+                        <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                          <Mail className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                          Cloudflare Native Email Outbox Logs
+                        </h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          Real-time delivery status, Cloudflare message IDs, and failure reasons directly from D1 storage.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          placeholder="Filter by recipient or document #..."
+                          value={emailLogsFilter}
+                          onChange={(e) => setEmailLogsFilter(e.target.value)}
+                          className="w-64 text-xs h-8"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void refreshWorkspace()}
+                          title="Refresh email logs"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 uppercase text-[10px] tracking-wider bg-slate-50/50 dark:bg-slate-900/50">
+                            <th className="py-2.5 px-3">Status</th>
+                            <th className="py-2.5 px-3">Document</th>
+                            <th className="py-2.5 px-3">Recipient</th>
+                            <th className="py-2.5 px-3">Subject</th>
+                            <th className="py-2.5 px-3">Dispatched At</th>
+                            <th className="py-2.5 px-3">Details / CF Message ID</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {filteredEmailLogs.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} className="py-8 text-center text-slate-400 italic">
+                                No email dispatch records found matching criteria.
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredEmailLogs.map((log) => (
+                              <tr key={log.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                                <td className="py-2.5 px-3 whitespace-nowrap">
+                                  {log.status === 'delivered' && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                      <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                                      Delivered
+                                    </span>
+                                  )}
+                                  {log.status === 'simulated' && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300">
+                                      <ExternalLink className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+                                      Simulated
+                                    </span>
+                                  )}
+                                  {log.status === 'failed' && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300">
+                                      <AlertTriangle className="w-3 h-3 text-rose-600 dark:text-rose-400" />
+                                      Failed
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-slate-100 whitespace-nowrap">
+                                  <span className="font-mono text-[11px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+                                    {log.documentNumber}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <div className="font-medium text-slate-800 dark:text-slate-200">{log.recipientEmail}</div>
+                                  {log.recipientName && (
+                                    <div className="text-[10px] text-slate-400">{log.recipientName}</div>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-600 dark:text-slate-300 max-w-xs truncate" title={log.subject}>
+                                  {log.subject}
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-500 whitespace-nowrap text-[11px]">
+                                  {new Date(log.createdAt).toLocaleString()}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  {log.status === 'failed' ? (
+                                    <div className="text-rose-600 dark:text-rose-400 font-mono text-[11px] bg-rose-50 dark:bg-rose-950/40 p-1 rounded max-w-sm truncate" title={log.errorMessage || 'Cloudflare dispatch failure'}>
+                                      {log.errorMessage || 'Unknown Error'}
+                                    </div>
+                                  ) : (
+                                    <span className="text-slate-400 dark:text-slate-500 font-mono text-[10px]" title={log.messageId || ''}>
+                                      {log.messageId ? log.messageId : '—'}
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                </div>
+              )}
+
+              {/* Sub-view E: Audit Trail */}
               {adminSubTab === 'audits' && (
                 <Card className="p-5">
                   <h3 className="text-base font-bold text-slate-900 dark:text-white mb-1">

@@ -18,6 +18,7 @@ import {
   clients,
   documents,
   auditLogs,
+  emailLogs,
 } from './db/schema';
 import { getR2Object } from './lib/r2';
 import { roundCurrency } from './lib/calculations';
@@ -147,6 +148,34 @@ app.get('/api/dashboard', requireRole('viewer'), async (c) => {
       estimateCount: estimates.length,
     },
     recentAudits,
+  });
+});
+
+/**
+ * Admin Native Email Outbox Logs (/api/admin/email-logs)
+ * Delivers Cloudflare Native Email dispatch logs, simulated flags, and error reasons directly to the app.
+ */
+app.get('/api/admin/email-logs', requireRole('member'), async (c) => {
+  const db = c.get('db');
+  const logs = await db
+    .select()
+    .from(emailLogs)
+    .orderBy(desc(emailLogs.createdAt))
+    .limit(100);
+
+  const total = logs.length;
+  const delivered = logs.filter((l) => l.status === 'delivered').length;
+  const simulated = logs.filter((l) => l.status === 'simulated').length;
+  const failed = logs.filter((l) => l.status === 'failed').length;
+
+  return c.json({
+    logs,
+    summary: {
+      total,
+      delivered,
+      simulated,
+      failed,
+    },
   });
 });
 

@@ -279,3 +279,33 @@ export async function sendEstimateEmail(
     }
   );
 }
+
+export interface EmailLogDto {
+  id: string;
+  documentId?: string | null;
+  documentNumber: string;
+  documentType: 'invoice' | 'estimate';
+  recipientEmail: string;
+  recipientName?: string | null;
+  senderEmail: string;
+  subject: string;
+  status: 'delivered' | 'simulated' | 'failed';
+  messageId?: string | null;
+  errorMessage?: string | null;
+  actorEmail?: string | null;
+  createdAt: number;
+}
+
+export interface EmailLogsResponse {
+  logs: EmailLogDto[];
+  summary: {
+    total: number;
+    delivered: number;
+    simulated: number;
+    failed: number;
+  };
+}
+
+export async function fetchEmailLogs(): Promise<EmailLogsResponse> {
+  return await apiFetch<EmailLogsResponse>('/api/admin/email-logs');
+}
