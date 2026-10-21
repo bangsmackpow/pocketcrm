@@ -280,6 +280,26 @@ export async function sendEstimateEmail(
   );
 }
 
+export async function deleteInvoice(
+  id: string,
+  password: string
+): Promise<{ success: boolean; message: string }> {
+  return await apiFetch<{ success: boolean; message: string }>(`/api/invoices/${id}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ password }),
+  });
+}
+
+export async function deleteEstimate(
+  id: string,
+  password: string
+): Promise<{ success: boolean; message: string }> {
+  return await apiFetch<{ success: boolean; message: string }>(`/api/estimates/${id}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ password }),
+  });
+}
+
 export interface EmailLogDto {
   id: string;
   documentId?: string | null;

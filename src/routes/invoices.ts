@@ -7,6 +7,7 @@ import {
   documentItems,
   clients,
   documentTemplates,
+  accounts,
   type InvoiceStatus,
 } from '../db/schema';
 import { requireRole, type AppEnv } from '../lib/auth';
@@ -22,7 +23,9 @@ import {
 import {
   putDocumentPdf,
   putDocumentAttachment,
+  deleteR2Object,
 } from '../lib/r2';
+import { verifyPassword } from 'better-auth/crypto';
 import { recordAuditLog } from '../lib/audit';
 import { recordEmailLog } from '../lib/email-log';
 import { sendDocumentEmail } from '../lib/email';
@@ -849,4 +852,105 @@ invoiceRoutes.post(
     simulated: emailResult.simulated ?? false,
   });
 });
+
+/**
+ * Delete Invoice (Admin Only with Re-Authentication)
+ * Requires the calling admin to provide their current account password.
+ * Deletes associated line items, cleans up R2 artifacts, and records a permanent audit entry.
+ */
+const deleteDocumentSchema = z.object({
+  password: z.string().min(1, 'Admin password is required to delete invoices'),
+});
+
+invoiceRoutes.delete(
+  '/:id',
+  requireRole('admin'),
+  zValidator('json', deleteDocumentSchema),
+  async (c) => {
+    const db = c.get('db');
+    const user = c.get('user');
+    const id = c.req.param('id');
+    const { password } = c.req.valid('json');
+
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const [doc] = await db
+      .select()
+      .from(documents)
+      .where(and(eq(documents.id, id), eq(documents.type, 'invoice')))
+      .limit(1);
+
+    if (!doc) {
+      return c.json({ error: 'Invoice not found' }, 404);
+    }
+
+    // Verify admin credentials
+    const [account] = await db
+      .select()
+      .from(accounts)
+      .where(eq(accounts.userId, user.id))
+      .limit(1);
+
+    if (!account?.password) {
+      return c.json({ error: 'Credential account not found for current admin' }, 403);
+    }
+
+    const isMatch = await verifyPassword({
+      password,
+      hash: account.password,
+    });
+
+    if (!isMatch) {
+      await recordAuditLog({
+        db,
+        user,
+        action: 'invoice.delete_failed_invalid_credentials',
+        entityType: 'invoice',
+        entityId: doc.id,
+        metadata: {
+          documentNumber: doc.documentNumber,
+          error: 'Invalid password provided during admin deletion confirmation',
+        },
+      });
+      return c.json({ error: 'Invalid admin password. Deletion cancelled.' }, 401);
+    }
+
+    // Clean up any R2 PDF if present
+    if (doc.pdfR2Key && c.env.STORAGE) {
+      try {
+        await deleteR2Object(c.env.STORAGE, doc.pdfR2Key);
+      } catch (err) {
+        console.warn(`[DeleteInvoice] Could not remove R2 PDF ${doc.pdfR2Key}:`, err);
+      }
+    }
+
+    // Delete document items and document
+    await db.delete(documentItems).where(eq(documentItems.documentId, doc.id));
+    await db.delete(documents).where(eq(documents.id, doc.id));
+
+    // High-visibility audit log
+    await recordAuditLog({
+      db,
+      user,
+      action: 'invoice.deleted',
+      entityType: 'invoice',
+      entityId: doc.id,
+      metadata: {
+        documentNumber: doc.documentNumber,
+        total: doc.total,
+        currency: doc.currency,
+        status: doc.status,
+        deletedBy: user.email,
+        adminConfirmed: true,
+      },
+    });
+
+    return c.json({
+      success: true,
+      message: `Invoice ${doc.documentNumber} has been permanently deleted.`,
+    });
+  }
+);
 

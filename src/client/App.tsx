@@ -63,6 +63,8 @@ import {
   uploadLogo,
   sendInvoiceEmail,
   sendEstimateEmail,
+  deleteInvoice,
+  deleteEstimate,
   fetchEmailLogs,
   type AuthUser,
   type ManagedUser,
@@ -221,6 +223,12 @@ export function App() {
   const [emailSubject, setEmailSubject] = useState('');
   const [emailCustomMessage, setEmailCustomMessage] = useState('');
   const [emailSending, setEmailSending] = useState(false);
+
+  // Admin Document Deletion with Credential Confirmation Modal
+  const [deleteDocTarget, setDeleteDocTarget] = useState<DocumentDto | null>(null);
+  const [deleteDocPassword, setDeleteDocPassword] = useState('');
+  const [deleteDocSubmitting, setDeleteDocSubmitting] = useState(false);
+  const [deleteDocError, setDeleteDocError] = useState<string | null>(null);
 
   // Page View State: 'tabs' (standard views) vs 'composer' (dedicated full-page document editor)
   const [pageView, setPageView] = useState<'tabs' | 'composer'>('tabs');
@@ -1040,6 +1048,34 @@ export function App() {
       notify('error', err instanceof Error ? err.message : 'Failed to send email');
     } finally {
       setEmailSending(false);
+    }
+  };
+
+  const openDeleteDocModal = (doc: DocumentDto) => {
+    setDeleteDocTarget(doc);
+    setDeleteDocPassword('');
+    setDeleteDocError(null);
+  };
+
+  const handleConfirmDeleteDoc = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deleteDocTarget || !deleteDocPassword) return;
+    setDeleteDocSubmitting(true);
+    setDeleteDocError(null);
+    try {
+      const res =
+        deleteDocTarget.type === 'invoice'
+          ? await deleteInvoice(deleteDocTarget.id, deleteDocPassword)
+          : await deleteEstimate(deleteDocTarget.id, deleteDocPassword);
+
+      notify('success', res.message);
+      setDeleteDocTarget(null);
+      setDeleteDocPassword('');
+      await refreshWorkspace();
+    } catch (err) {
+      setDeleteDocError(err instanceof Error ? err.message : 'Deletion failed');
+    } finally {
+      setDeleteDocSubmitting(false);
     }
   };
 
@@ -2068,6 +2104,18 @@ export function App() {
                               <Download className="w-3 h-3" />
                               PDF (R2)
                             </a>
+                            {currentUser?.role === 'admin' && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => openDeleteDocModal(est)}
+                                className="border-rose-200 dark:border-rose-900/60 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                                title="Permanently delete estimate (Admin Only - Requires Password)"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                Delete
+                              </Button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -2236,6 +2284,18 @@ export function App() {
                               <Download className="w-3 h-3" />
                               PDF (R2)
                             </a>
+                            {currentUser?.role === 'admin' && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => openDeleteDocModal(inv)}
+                                className="border-rose-200 dark:border-rose-900/60 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                                title="Permanently delete invoice (Admin Only - Requires Password)"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                Delete
+                              </Button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -3841,6 +3901,68 @@ export function App() {
                     Send Email + PDF
                   </>
                 )}
+              </Button>
+            </div>
+          </form>
+        </DialogModal>
+      </Dialog>
+
+      {/* Admin Delete Document Credential Confirmation Modal */}
+      <Dialog open={!!deleteDocTarget} onOpenChange={(open) => !open && setDeleteDocTarget(null)}>
+        <DialogModal
+          title={`Delete ${deleteDocTarget?.type === 'invoice' ? 'Invoice' : 'Estimate'}: ${deleteDocTarget?.documentNumber}`}
+          description="Permanent deletion. You must confirm your admin account password to execute."
+        >
+          <form onSubmit={handleConfirmDeleteDoc} className="space-y-4">
+            {deleteDocError && (
+              <div className="p-3 text-xs bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 rounded-lg text-rose-700 dark:text-rose-300 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{deleteDocError}</span>
+              </div>
+            )}
+
+            <div className="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 rounded-lg text-xs text-amber-800 dark:text-amber-200">
+              <p className="font-semibold">Caution: Irreversible Admin Deletion</p>
+              <p className="mt-1">
+                Are you sure you want to permanently delete document <strong>{deleteDocTarget?.documentNumber}</strong> ({deleteDocTarget?.currency} ${deleteDocTarget?.total.toFixed(2)})? All associated line items and rendered files will be destroyed. This operation is permanently recorded in the immutable audit trail.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="admin-delete-password">Confirm Admin Password</Label>
+              <Input
+                id="admin-delete-password"
+                type="password"
+                value={deleteDocPassword}
+                onChange={(e) => setDeleteDocPassword(e.target.value)}
+                placeholder="Enter your current admin password"
+                required
+                autoFocus
+                className="text-sm"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDeleteDocTarget(null)}
+                disabled={deleteDocSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant="danger"
+                disabled={deleteDocSubmitting || !deleteDocPassword}
+                className="gap-1.5"
+              >
+                {deleteDocSubmitting ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="w-3.5 h-3.5" />
+                )}
+                Permanently Delete
               </Button>
             </div>
           </form>
