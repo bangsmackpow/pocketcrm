@@ -1,63 +1,133 @@
-# PocketCRM — Edge CRM, Quoting & Invoicing System
+# PocketCRM — Edge CRM, Quoting, Invoicing & Tax Analytics
 
-Production-grade CRM, Quoting/Estimating, and Invoicing platform built on **Cloudflare Workers/Pages**, **Cloudflare D1**, **Cloudflare R2**, **Drizzle ORM**, **Better Auth (RBAC)**, **Hono**, and **React + Tailwind CSS + Radix UI**.
+A production-grade, offline-capable Progressive Web App (PWA) and edge billing system built on **Cloudflare Workers**, **Cloudflare D1**, **Cloudflare R2**, **Cloudflare Email Routing**, **Drizzle ORM**, **Better Auth (RBAC)**, **Hono**, and **React 19 + Tailwind CSS + Radix UI**.
+
+Deployed live on Cloudflare Edge: **[pocketcrm.builtnetworks.com](https://pocketcrm.builtnetworks.com)** (and [pocketcrm.curtislamasters.workers.dev](https://pocketcrm.curtislamasters.workers.dev)).
 
 ---
 
-## Architecture & Repository Layout
+## 🌟 Key Capabilities
+
+### 1. Quoting, Invoicing & Full-Page Composer
+- **Dedicated Full-Page Document Composer**: Line-item level editing with live discount, dual-tax, and subtotal calculations.
+- **Service Catalog**: Quick item auto-fill from an itemized product & services inventory.
+- **Document Lifecycles**:
+  - *Estimates / Quotes*: `Draft` $\rightarrow$ `Sent` $\rightarrow$ `Approved` / `Rejected` $\rightarrow$ 1-Click Conversion to Invoice.
+  - *Invoices*: `Draft` $\rightarrow$ `Sent` $\rightarrow$ `Partial` / `Paid` $\rightarrow$ `Overdue` $\rightarrow$ `Cancelled`.
+- **Edge PDF Generation**: High-performance, pixel-perfect PDF 1.4 rendering executed directly inside Cloudflare Workers without headless browsers.
+- **Native Cloudflare Email Dispatch**: Dispatch invoices and quotes with embedded PDF attachments directly from the edge via Cloudflare Workers `env.EMAIL` binding.
+
+### 2. State-Specific & Iowa Tax Analytics
+- **Iowa Single-Sales-Factor Apportionment**: Automatically isolates Iowa in-state gross receipts from out-of-state revenue (Form IA 1040 Schedule C / IA 1120).
+- **Cash vs. Accrual Accounting Method**: Real-time toggling between cash received vs. invoices billed.
+- **Sales Tax & Local Option (LOST) Breakdown**: Itemized 6% Iowa State Sales Tax and 1% Local Option Sales Tax (e.g. Union County / Creston) collections.
+- **Quarterly Estimated Tax Schedule**: Grouped by statutory Iowa voucher payment deadlines (Q1: April 30, Q2: July 1, Q3: October 1, Q4: January 31).
+- **Accounts Receivable (A/R) Aging**: 5-bucket aging schedule (`Current`, `1–30`, `31–60`, `61–90`, `90+` days overdue).
+- **1-Click CPA Tax Packet CSV Export**: Generates an audit-ready tax and invoice register spreadsheet.
+
+### 3. Progressive Web App (PWA) & Mobile-First UX
+- **Installable Native App**: Custom Web App Manifest (`standalone` mode) and full icon suite for iOS & Android home screens.
+- **Offline Shell**: Service Worker with Cache-First static asset caching and Network-First document routing.
+- **Thumb-Zone Navigation**: Fixed bottom navigation bar with an elevated **Floating Action Button (+)** for instant creation of Invoices, Quotes, and Clients.
+- **Responsive Mobile Cards**: Data-dense desktop tables gracefully convert to swipeable, touch-friendly mobile cards on viewports $<640\text{px}$.
+
+### 4. Enterprise Security & Auditability
+- **Role-Based Access Control (RBAC)**: Fine-grained permissions (`admin`, `member`, `viewer`) managed by Better Auth.
+- **Re-Authentication for High-Risk Actions**: Admin password confirmation required for permanent document deletions.
+- **Immutable Audit Trail**: Structured event logging recording actor, entity ID, action, and timestamp.
+- **Outbox Email Delivery Logs**: Live visibility into email deliverability and simulated/production dispatch statuses.
+
+---
+
+## 🏛️ Architecture & Repository Layout
 
 ```text
 ├── src/
 │   ├── db/
-│   │   ├── schema.ts          # Drizzle ORM SQLite/D1 schema (users, sessions, accounts, clients, documents, document_items, document_templates, audit_logs)
-│   │   ├── client.ts          # Dual-driver factory: Drizzle D1 (Worker runtime) + better-sqlite3 (offline CLI migrations/seeding)
-│   │   ├── seed.ts            # Offline local SQLite seeder (users, clients, templates, invoices, estimates)
-│   │   └── migrations/        # SQL migrations applied to local/remote Cloudflare D1
+│   │   ├── schema.ts            # Drizzle SQLite/D1 schema (clients, documents, document_items, templates, audit_logs, email_logs)
+│   │   ├── client.ts            # Dual-driver factory: Cloudflare D1 (Worker) + better-sqlite3 (offline tooling)
+│   │   ├── seed.ts              # Local database seeder
+│   │   └── migrations/          # D1 SQL migration files
 │   ├── lib/
-│   │   ├── auth.ts            # Better Auth + Drizzle D1 adapter & RBAC middleware (admin, member, viewer)
-│   │   ├── calculations.ts    # Line items engine (unit prices, quantities, discounts, simple & compound taxes) + state machine validators
-│   │   ├── csv-parser.ts      # PapaParse + Zod deterministic CSV parser & document/line-item grouping
-│   │   ├── pdf.ts             # Configurable HTML template & native PDF 1.4 edge binary generator
-│   │   ├── r2.ts              # Cloudflare R2 storage adapter (PDFs, attachments, CSV import backups)
-│   │   └── audit.ts           # Immutable audit trail logger
+│   │   ├── auth.ts              # Better Auth + Drizzle D1 adapter & session middleware
+│   │   ├── calculations.ts      # Tax, discount, and document total engine
+│   │   ├── email.ts             # Native Cloudflare Email dispatcher with MIME multipart PDF attachments
+│   │   ├── pdf.ts               # Pure TypeScript edge PDF 1.4 binary generator
+│   │   ├── r2.ts                # Cloudflare R2 bucket integration for assets & documents
+│   │   └── audit.ts             # Immutable audit logging helper
 │   ├── routes/
-│   │   ├── auth.ts            # Better Auth endpoints + RBAC role management + audit logs
-│   │   ├── clients.ts         # CRM Client CRUD (contacts, billing/shipping addresses, tax IDs, payment terms)
-│   │   ├── estimates.ts       # Estimates/Quotes workflow (Draft -> Sent -> Approved/Rejected -> Converted to Invoice)
-│   │   ├── invoices.ts        # Invoices workflow (Draft -> Sent -> Partial/Paid -> Overdue -> Cancelled) + payments & R2 attachments
-│   │   ├── import.ts          # Templated CSV Ingestion Engine using atomic D1 db.batch() & row-level error reporting
-│   │   └── templates.ts       # Configurable document templates (custom CSS variables, logo placement, payment & legal clauses)
-│   ├── client/                # React 19 + Tailwind CSS + Radix UI Single Page Application
-│   └── index.ts               # Hono Cloudflare Worker entry point with ASSETS SPA fallback
-├── wrangler.jsonc             # Cloudflare Worker configuration with D1 ("DB"), R2 ("STORAGE"), and SPA ("ASSETS") bindings
-├── drizzle.config.ts          # Drizzle Kit configuration for local/D1 schema management
-└── .github/workflows/ci.yml   # GitHub CI workflow for AGY -> GitHub -> Cloudflare auto-builds
+│   │   ├── auth.ts              # User authentication, session management, and RBAC
+│   │   ├── clients.ts           # Customer management & CSV import
+│   │   ├── documents.ts         # Base document operations
+│   │   ├── estimates.ts         # Estimates & quote approval lifecycles
+│   │   ├── invoices.ts          # Invoice lifecycles, payment recording, and PDF streaming
+│   │   ├── items.ts             # Service catalog management
+│   │   ├── reports.ts           # State tax analytics, Iowa apportionment, A/R aging & CSV exports
+│   │   └── templates.ts         # Visual document templates & branding
+│   ├── client/                  # React 19 + Tailwind CSS + Lucide Icons SPA
+│   │   ├── App.tsx              # Main application shell, tabs, bottom bar, and view logic
+│   │   ├── main.tsx             # Entry point & PWA service worker registration
+│   │   └── styles.css           # Global typography, mobile safe-areas, and touch targets
+│   └── index.ts                 # Hono Cloudflare Worker API router & static asset handler
+├── public/                      # PWA assets (manifest.webmanifest, sw.js, app icons)
+├── docs/                        # Specifications, plans, and architectural RFCs
+│   ├── superpowers/plans/       # Feature roadmaps and technical implementation plans
+├── CUSTOMER_AUTO_FEED_PLAN.md   # Customer discovery, enrichment, and webhook ingestion roadmap
+├── MULTITENANT_PLAN.md          # Multi-tenant D1/R2 scaling and tenant isolation architecture
+├── FEATURE_ADD.md               # Feature wishlist & prioritized product backlog
+├── wrangler.jsonc               # Cloudflare Worker configuration (D1, R2, EMAIL, ASSETS)
+└── package.json                 # Dependencies & automation scripts
 ```
 
 ---
 
-## Quick Start & Local Development
+## 🚀 Quick Start & Local Development
 
-1. **Install dependencies:**
-   ```bash
-   npm install
-   ```
+### 1. Prerequisites
+- **Node.js** v20+
+- **Cloudflare Wrangler CLI** (`npm i -g wrangler` or run via `npx wrangler`)
 
-2. **Initialize & seed local SQLite / D1 database:**
-   ```bash
-   npm run db:migrate:local
-   npm run db:seed:local
-   ```
+### 2. Installation
+```bash
+git clone https://github.com/bangsmackpow/pocketcrm.git
+cd pocketcrm
+npm install
+```
 
-3. **Run local development servers:**
-   ```bash
-   # Terminal 1: Cloudflare Worker + D1 + R2 on :8787
-   npm run dev:worker
+### 3. Database Setup (Local D1)
+```bash
+# Apply migrations to local SQLite emulator
+npm run db:migrate:local
+```
 
-   # Terminal 2: Vite SPA on :5173 (proxies /api/* to :8787)
-   npm run dev
-   ```
+### 4. Running the Dev Server
+```bash
+# Terminal 1: Cloudflare Worker backend (:8787)
+npm run dev:worker
 
-4. **Cloudflare Auto-Build (GitHub Integration):**
-   - Build command: `npm run build`
-   - Deploy command: `npx wrangler deploy`
+# Terminal 2: Vite React frontend (:5173 with proxy to :8787)
+npm run dev
+```
+
+---
+
+## 📦 Build & Deployment
+
+To deploy directly to Cloudflare Workers from your local environment:
+
+```bash
+# Verify TypeScript types
+npm run typecheck
+
+# Build Vite client bundles
+npm run build
+
+# Deploy assets and worker script to Cloudflare Edge
+npm run deploy
+```
+
+---
+
+## 🔒 Security & Privacy Notice
+- Legacy database dumps, private customer PII, and migration files (`*.sqlite`, `*.db`, `docs/legacy/`, `scripts/`) are strictly excluded via `.gitignore` and must **never** be pushed to GitHub.
+- First-party code adheres to strict Content Security Policies, CORS origin validation, and parameterized SQL queries to prevent injection vulnerabilities.

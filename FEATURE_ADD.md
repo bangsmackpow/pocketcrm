@@ -52,11 +52,12 @@ This document outlines the strategic research conducted across the top 3 CRM and
 * **Stack Implementation**: Stripe Checkout Session API + Cloudflare Worker webhook handler.
 
 ### 4. Automated Payment Reminders & Accounts Receivable (AR) Aging
+* **Status**: **Partially Completed** ✅ *(A/R Aging Schedule & Itemized Overdue Buckets implemented in Tax & Reports Engine; Cron-based automated reminder emails queued for next iteration)*.
 * **The Need**: Following up manually on unpaid invoices is uncomfortable and often procrastinated.
 * **Feature Scope**:
   - Automated reminder schedule (e.g., *3 days before due date*, *on due date*, *7 days overdue*, *14 days overdue*).
   - Polite, professional automated email with attached PDF and payment link.
-  - Visual AR Aging report on the Dashboard: `Current`, `1–30 Days Past Due`, `31–60 Days`, `60+ Days`.
+  - Visual AR Aging report on the Dashboard & Reports tab: `Current`, `1–30 Days Past Due`, `31–60 Days`, `61–90 Days`, `90+ Days` *(Completed)*.
 * **Stack Implementation**: Cloudflare Worker Scheduled Cron Trigger (`scheduled()` handler running daily) querying D1 for overdue invoices.
 
 ### 5. Billable Reimbursable Expenses & Passthrough Cost Tracking
