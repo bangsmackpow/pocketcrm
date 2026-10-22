@@ -112,6 +112,13 @@ Code running inside `src/routes/`, `src/lib/`, or `src/index.ts` runs inside the
   * **Sales Tax**: Iowa standard rate is 6.00% state sales tax + 1.00% Local Option Sales Tax (LOST) = 7.00% total.
   * When updating `src/routes/reports.ts`, preserve cash vs. accrual basis calculations and statutory quarterly voucher deadlines (Q1: April 30, Q2: July 1, Q3: October 1, Q4: January 31).
 
+### Rule 6: Cloudflare Cost & Resource Guardrails ($5/mo Optimization)
+PocketCRM operates on a **$5/month Cloudflare Workers Paid plan**. To maintain zero-overage cost predictability:
+* **No Binary Blobs in D1**: Never store base64 images or PDFs in D1 tables. Always write binary files to Cloudflare R2 and store only the R2 object key string in D1.
+* **Avoid R2 `list()` Operations**: R2 Class A operations (`PUT`, `LIST`) cost $4.50/million, whereas Class B operations (`GET`) cost $0.36/million. Always access attachments and files by direct key (`env.STORAGE.get(key)`); never call `env.STORAGE.list()` in hot API request paths.
+* **Read-Amplification Defense**: Guard all reporting and data endpoints with edge rate limiting (max 120 req/min per IP) and Bot Fight Mode to prevent infinite polling loops or scrapers from inflating Worker requests beyond the 10M included monthly quota.
+* **CPU & Memory Budget**: Enforce client-side image resizing on logo uploads (max 500 KB / 1024x1024) to keep edge PDF rendering fast and well inside the 128 MB Worker RAM envelope.
+
 ---
 
 ## 5. Reference Architectural Documents

@@ -128,6 +128,26 @@ npm run deploy
 
 ---
 
+## 💰 Infrastructure & Operational Cost Model
+
+PocketCRM is engineered to run at maximum cost efficiency on a **$5/month Cloudflare Workers Paid** subscription with zero egress fees:
+
+| Resource | Monthly Included Quota | Typical Single-Tenant Usage | 50-Tenant Usage |
+| :--- | :--- | :--- | :--- |
+| **Worker Requests** | 10,000,000 / month | ~5,000 (<0.1%) | ~250,000 (2.5%) |
+| **D1 Row Reads** | 25,000,000,000 / month | ~50,000 (<0.01%) | ~500,000 (<0.01%) |
+| **D1 Storage** | 5 GB included | ~20 MB (0.4%) | ~300 MB (6%) |
+| **R2 Storage (PDFs/Logos)** | 10 GB included | ~50 MB (0.5%) | ~1.5 GB (15%) |
+| **R2 Egress Bandwidth** | **Unlimited (100% Free)** | Free | Free |
+| **Total Cloudflare Bill** | **$5.00 / month** | **$5.00 / month** | **$5.00 / month** |
+
+### Built-in Cost Guardrails
+- **Zero Binary Storage in D1**: All PDF snapshots, receipts, and logos are stored in R2; D1 only stores small metadata keys.
+- **Optimized R2 Operations**: Assets are fetched by exact key (`Class B`, $0.36/M) rather than expensive bucket listings (`Class A`, $4.50/M).
+- **Edge Rate Limiting**: WAF and Bot Fight Mode protect against runaway scraping or infinite polling loops.
+
+---
+
 ## 🔒 Security & Privacy Notice
 - Legacy database dumps, private customer PII, and migration files (`*.sqlite`, `*.db`, `docs/legacy/`, `scripts/`) are strictly excluded via `.gitignore` and must **never** be pushed to GitHub.
 - First-party code adheres to strict Content Security Policies, CORS origin validation, and parameterized SQL queries to prevent injection vulnerabilities.
