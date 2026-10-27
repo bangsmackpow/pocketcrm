@@ -200,114 +200,122 @@ function escapeHtml(str: string | null | undefined): string {
  * Dispatches an invoice or estimate via Cloudflare Workers send_email binding.
  */
 export async function sendDocumentEmail(options: SendDocumentEmailOptions): Promise<EmailSendResult> {
-  const {
-    env,
-    ctx,
-    recipientEmail,
-    recipientName = ctx.client.contactName || ctx.client.companyName,
-    customMessage,
-    subject: explicitSubject,
-  } = options;
-
-  const doc = ctx.document;
-  const isInvoice = doc.type === 'invoice';
-  const docTypeLabel = isInvoice ? 'Invoice' : 'Estimate';
-  
-  // Sender email and name
-  const senderEmail = options.senderEmail || env.EMAIL_FROM || 'invoicing@billing.builtnetworks.com';
-  const senderName = options.senderName || env.EMAIL_FROM_NAME || 'Built Networks Invoicing';
-
-  const defaultSubject = `[${docTypeLabel}] #${doc.documentNumber} from ${senderName}`;
-  const subject = explicitSubject || defaultSubject;
-
-  // Verify recipient
-  if (!recipientEmail || !recipientEmail.includes('@')) {
-    return { success: false, error: 'A valid recipient email address is required.' };
-  }
-
-  // Generate PDF attachment
-  const pdfBuffer = await generateDocumentPdfBuffer({
-    ...ctx,
-    storage: env.STORAGE,
-  });
-  const pdfBase64 = Buffer.from(pdfBuffer).toString('base64');
-  const filename = `${doc.documentNumber}.pdf`;
-
-  // Build HTML email body
-  const htmlContent = buildDocumentEmailHtml({
-    ctx,
-    recipientName,
-    customMessage,
-    companyName: senderName,
-  });
-
-  // Build Plain Text fallback
-  const plainText = [
-    `${senderName} - ${docTypeLabel} #${doc.documentNumber}`,
-    `--------------------------------------------------`,
-    `Recipient: ${recipientName} (${ctx.client.companyName})`,
-    `Issue Date: ${doc.issueDate}  |  Due Date: ${doc.dueDate}`,
-    `Total: ${formatMoney(doc.total, doc.currency)}`,
-    isInvoice ? `Balance Due: ${formatMoney(doc.amountDue, doc.currency)}` : '',
-    '',
-    customMessage ? `Note: ${customMessage}\n` : '',
-    `Payment Instructions: ${ctx.template?.paymentInstructions || 'See attached PDF'}`,
-    '',
-    `Please find your official PDF attached as ${filename}.`,
-  ]
-    .filter(Boolean)
-    .join('\n');
-
-  // Construct MIME message using mimetext
-  const msg = createMimeMessage();
-  msg.setSender({ name: senderName, addr: senderEmail });
-  msg.setRecipient({ name: recipientName, addr: recipientEmail });
-  msg.setSubject(subject);
-
-  // Plain text fallback
-  msg.addMessage({
-    contentType: 'text/plain',
-    data: plainText,
-  });
-
-  // Rich HTML body
-  msg.addMessage({
-    contentType: 'text/html',
-    data: htmlContent,
-  });
-
-  // PDF Attachment
-  msg.addAttachment({
-    filename,
-    contentType: 'application/pdf',
-    data: pdfBase64,
-    encoding: 'base64',
-  });
-
-  // Check if native Cloudflare send_email binding is active
-  if (!env.EMAIL) {
-    console.warn(`[PocketCRM Native Email] env.EMAIL binding is not active in current environment. Simulated email sent to ${recipientEmail}`);
-    return {
-      success: true,
-      simulated: true,
-      messageId: `sim_${Date.now()}`,
-    };
-  }
-
   try {
-    const rawMime = msg.asRaw();
-    const cloudflareMessage = new EmailMessage(senderEmail, recipientEmail, rawMime);
-    await env.EMAIL.send(cloudflareMessage);
+    const {
+      env,
+      ctx,
+      recipientEmail,
+      recipientName = ctx.client.contactName || ctx.client.companyName,
+      customMessage,
+      subject: explicitSubject,
+    } = options;
 
-    return {
-      success: true,
-      messageId: `cf_${Date.now()}`,
-    };
+    const doc = ctx.document;
+    const isInvoice = doc.type === 'invoice';
+    const docTypeLabel = isInvoice ? 'Invoice' : 'Estimate';
+    
+    // Sender email and name
+    const senderEmail = options.senderEmail || env.EMAIL_FROM || 'invoicing@billing.builtnetworks.com';
+    const senderName = options.senderName || env.EMAIL_FROM_NAME || 'Built Networks Invoicing';
+
+    const defaultSubject = `[${docTypeLabel}] #${doc.documentNumber} from ${senderName}`;
+    const subject = explicitSubject || defaultSubject;
+
+    // Verify recipient
+    if (!recipientEmail || !recipientEmail.includes('@')) {
+      return { success: false, error: 'A valid recipient email address is required.' };
+    }
+
+    // Generate PDF attachment
+    const pdfBuffer = await generateDocumentPdfBuffer({
+      ...ctx,
+      storage: env.STORAGE,
+    });
+    const pdfBase64 = Buffer.from(pdfBuffer).toString('base64');
+    const filename = `${doc.documentNumber}.pdf`;
+
+    // Build HTML email body
+    const htmlContent = buildDocumentEmailHtml({
+      ctx,
+      recipientName,
+      customMessage,
+      companyName: senderName,
+    });
+
+    // Build Plain Text fallback
+    const plainText = [
+      `${senderName} - ${docTypeLabel} #${doc.documentNumber}`,
+      `--------------------------------------------------`,
+      `Recipient: ${recipientName} (${ctx.client.companyName})`,
+      `Issue Date: ${doc.issueDate}  |  Due Date: ${doc.dueDate}`,
+      `Total: ${formatMoney(doc.total, doc.currency)}`,
+      isInvoice ? `Balance Due: ${formatMoney(doc.amountDue, doc.currency)}` : '',
+      '',
+      customMessage ? `Note: ${customMessage}\n` : '',
+      `Payment Instructions: ${ctx.template?.paymentInstructions || 'See attached PDF'}`,
+      '',
+      `Please find your official PDF attached as ${filename}.`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    // Construct MIME message using mimetext
+    const msg = createMimeMessage();
+    msg.setSender({ name: senderName, addr: senderEmail });
+    msg.setRecipient({ name: recipientName, addr: recipientEmail });
+    msg.setSubject(subject);
+
+    // Plain text fallback
+    msg.addMessage({
+      contentType: 'text/plain',
+      data: plainText,
+    });
+
+    // Rich HTML body
+    msg.addMessage({
+      contentType: 'text/html',
+      data: htmlContent,
+    });
+
+    // PDF Attachment
+    msg.addAttachment({
+      filename,
+      contentType: 'application/pdf',
+      data: pdfBase64,
+      encoding: 'base64',
+    });
+
+    // Check if native Cloudflare send_email binding is active
+    if (!env.EMAIL) {
+      console.warn(`[PocketCRM Native Email] env.EMAIL binding is not active in current environment. Simulated email sent to ${recipientEmail}`);
+      return {
+        success: true,
+        simulated: true,
+        messageId: `sim_${Date.now()}`,
+      };
+    }
+
+    try {
+      const rawMime = msg.asRaw();
+      const cloudflareMessage = new EmailMessage(senderEmail, recipientEmail, rawMime);
+      await env.EMAIL.send(cloudflareMessage);
+
+      return {
+        success: true,
+        messageId: `cf_${Date.now()}`,
+      };
+    } catch (err: any) {
+      console.error('[PocketCRM Native Email] Cloudflare Email Send failed:', err);
+      return {
+        success: false,
+        error: err.message || 'Cloudflare Native Email dispatch failed. Please verify Email Routing is enabled for builtnetworks.com in Cloudflare Dashboard.',
+      };
+    }
   } catch (err: any) {
-    console.error('[PocketCRM Native Email] Cloudflare Email Send failed:', err);
+    console.error('[PocketCRM Native Email] Document email generation or assembly failed:', err);
     return {
       success: false,
-      error: err.message || 'Cloudflare Native Email dispatch failed. Please verify Email Routing is enabled for builtnetworks.com in Cloudflare Dashboard.',
+      error: err.message || 'Failed to generate document or assemble email message.',
     };
   }
 }

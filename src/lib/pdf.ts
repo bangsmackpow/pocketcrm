@@ -73,9 +73,62 @@ function hexToRgb(hex: string | undefined | null, defaultRgb: RGB): RGB {
   return defaultRgb;
 }
 
-function wrapText(text: string, maxWidth: number, font: PDFFont, fontSize: number): string[] {
+/**
+ * Sanitizes any raw string into a clean string compatible with PDF standard WinAnsi encoding.
+ * 1. Converts tabs (\t) to 4 spaces.
+ * 2. Normalizes line breaks (\r\n -> \n, \r -> \n).
+ * 3. Transliterates common non-WinAnsi unicode symbols (e.g. smart quotes, non-breaking spaces).
+ * 4. Strips or replaces any remaining unencodeable glyphs to prevent pdf-lib fatal WinAnsi crashes.
+ */
+export function sanitizePdfText(text: string | null | undefined, font?: PDFFont): string {
+  if (!text) return '';
+
+  // 1. Convert tabs to 4 spaces and normalize carriage returns
+  const normalized = text
+    .replace(/\t/g, '    ')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
+
+  // 2. Transliterate common unicode characters
+  const transliterated = normalized
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u2014\u2015]/g, '-')
+    .replace(/[\u2013]/g, '-')
+    .replace(/\u2026/g, '...')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[\u2022\u25E6\u25AA\u25AB]/g, '•')
+    .replace(/\u20AC/g, 'EUR')
+    .replace(/\u00A3/g, 'GBP')
+    .replace(/\u00A5/g, 'JPY');
+
+  // 3. If font provided, ensure every code point is in font.getCharacterSet()
+  if (font) {
+    const supported = new Set(font.getCharacterSet());
+    let safe = '';
+    for (const char of transliterated) {
+      if (char === '\n') {
+        safe += '\n';
+        continue;
+      }
+      const code = char.codePointAt(0);
+      if (code !== undefined && supported.has(code)) {
+        safe += char;
+      } else {
+        // Fallback for unprintable or unsupported unicode glyphs
+        safe += ' ';
+      }
+    }
+    return safe;
+  }
+
+  return transliterated;
+}
+
+function wrapText(rawText: string, maxWidth: number, font: PDFFont, fontSize: number): string[] {
+  const text = sanitizePdfText(rawText, font);
   const lines: string[] = [];
-  const paragraphs = text.split(/\r?\n/);
+  const paragraphs = text.split('\n');
   for (const para of paragraphs) {
     if (!para) {
       lines.push('');
@@ -98,15 +151,31 @@ function wrapText(text: string, maxWidth: number, font: PDFFont, fontSize: numbe
   return lines;
 }
 
+function safeDrawText(
+  page: PDFPage,
+  rawText: string,
+  options: {
+    x: number;
+    y: number;
+    font: PDFFont;
+    size: number;
+    color?: RGB;
+  }
+) {
+  const text = sanitizePdfText(rawText, options.font);
+  page.drawText(text, options);
+}
+
 function drawTextRight(
   page: PDFPage,
-  text: string,
+  rawText: string,
   rightX: number,
   y: number,
   font: PDFFont,
   size: number,
   color: RGB
 ) {
+  const text = sanitizePdfText(rawText, font);
   const width = font.widthOfTextAtSize(text, size);
   page.drawText(text, {
     x: rightX - width,
@@ -510,7 +579,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
   const companyLines = companyHeader.split(/\r?\n/);
   for (const cLine of companyLines.slice(0, 3)) {
     if (!cLine.trim()) continue;
-    currentPage.drawText(cLine.trim(), {
+    safeDrawText(currentPage, cLine.trim(), {
       x: marginX + 16,
       y: compY,
       font: fontRegular,
@@ -525,8 +594,9 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
 
   // Document Number
   const docNumText = `#${doc.documentNumber}`;
-  const docNumWidth = fontBold.widthOfTextAtSize(docNumText, 16);
-  currentPage.drawText(docNumText, {
+  const cleanDocNum = sanitizePdfText(docNumText, fontBold);
+  const docNumWidth = fontBold.widthOfTextAtSize(cleanDocNum, 16);
+  safeDrawText(currentPage, cleanDocNum, {
     x: rightAlignX - docNumWidth,
     y: headerCardY + headerCardHeight - 28,
     font: fontBold,
@@ -536,7 +606,8 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
 
   // Status Badge Pill
   const statusUpper = doc.status.toUpperCase();
-  const statusW = fontBold.widthOfTextAtSize(statusUpper, 8) + 16;
+  const cleanStatus = sanitizePdfText(statusUpper, fontBold);
+  const statusW = fontBold.widthOfTextAtSize(cleanStatus, 8) + 16;
   const statusH = 16;
   const statusX = rightAlignX - statusW;
   const statusY = headerCardY + headerCardHeight - 50;
@@ -557,7 +628,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
     height: statusH,
     color: statusBg,
   });
-  currentPage.drawText(statusUpper, {
+  safeDrawText(currentPage, cleanStatus, {
     x: statusX + 8,
     y: statusY + 4,
     font: fontBold,
@@ -567,8 +638,9 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
 
   // Issue & Due Dates
   const issueDateStr = `Issue Date: ${doc.issueDate}`;
-  const issueDateW = fontRegular.widthOfTextAtSize(issueDateStr, 8.5);
-  currentPage.drawText(issueDateStr, {
+  const cleanIssueDate = sanitizePdfText(issueDateStr, fontRegular);
+  const issueDateW = fontRegular.widthOfTextAtSize(cleanIssueDate, 8.5);
+  safeDrawText(currentPage, cleanIssueDate, {
     x: rightAlignX - issueDateW,
     y: headerCardY + 30,
     font: fontRegular,
@@ -577,8 +649,9 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
   });
 
   const dueDateStr = `Due Date: ${doc.dueDate}`;
-  const dueDateW = fontBold.widthOfTextAtSize(dueDateStr, 8.5);
-  currentPage.drawText(dueDateStr, {
+  const cleanDueDate = sanitizePdfText(dueDateStr, fontBold);
+  const dueDateW = fontBold.widthOfTextAtSize(cleanDueDate, 8.5);
+  safeDrawText(currentPage, cleanDueDate, {
     x: rightAlignX - dueDateW,
     y: headerCardY + 16,
     font: fontBold,
@@ -601,7 +674,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
     borderWidth: 1,
   });
 
-  currentPage.drawText('BILLED TO', {
+  safeDrawText(currentPage, 'BILLED TO', {
     x: marginX + 16,
     y: billedCardY + billedCardHeight - 16,
     font: fontBold,
@@ -610,7 +683,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
   });
 
   const clientHeader = `${client.companyName} (${client.code})`;
-  currentPage.drawText(clientHeader, {
+  safeDrawText(currentPage, clientHeader, {
     x: marginX + 16,
     y: billedCardY + billedCardHeight - 30,
     font: fontBold,
@@ -619,7 +692,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
   });
 
   const contactLine = `Attn: ${client.contactName} • ${client.email}${client.phone ? ` • ${client.phone}` : ''}`;
-  currentPage.drawText(contactLine, {
+  safeDrawText(currentPage, contactLine, {
     x: marginX + 16,
     y: billedCardY + billedCardHeight - 44,
     font: fontRegular,
@@ -632,7 +705,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
     .filter(Boolean)
     .join(', ');
   const taxIdPart = client.taxIdentifier ? `   |   Tax ID: ${client.taxIdentifier}` : '';
-  currentPage.drawText(`${addrLine}${taxIdPart}`, {
+  safeDrawText(currentPage, `${addrLine}${taxIdPart}`, {
     x: marginX + 16,
     y: billedCardY + billedCardHeight - 58,
     font: fontRegular,
@@ -654,8 +727,8 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
       borderWidth: 1,
     });
 
-    page.drawText('#', { x: marginX + 10, y: y - 13, font: fontBold, size: 8, color: darkTextColor });
-    page.drawText('ITEM & DESCRIPTION', { x: marginX + 35, y: y - 13, font: fontBold, size: 8, color: darkTextColor });
+    safeDrawText(page, '#', { x: marginX + 10, y: y - 13, font: fontBold, size: 8, color: darkTextColor });
+    safeDrawText(page, 'ITEM & DESCRIPTION', { x: marginX + 35, y: y - 13, font: fontBold, size: 8, color: darkTextColor });
 
     drawTextRight(page, 'QTY', marginX + 355, y - 13, fontBold, 8, darkTextColor);
     drawTextRight(page, 'UNIT PRICE', marginX + 430, y - 13, fontBold, 8, darkTextColor);
@@ -694,7 +767,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
     }
 
     // Index
-    currentPage.drawText(`${idx + 1}`, {
+    safeDrawText(currentPage, `${idx + 1}`, {
       x: marginX + 10,
       y: currentY - 8,
       font: fontRegular,
@@ -703,7 +776,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
     });
 
     // Item Name
-    currentPage.drawText(item.name, {
+    safeDrawText(currentPage, item.name, {
       x: marginX + 35,
       y: currentY - 8,
       font: fontBold,
@@ -714,7 +787,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
     // Item Description (wrapped lines)
     let dY = currentY - 18;
     for (const dLine of descLines) {
-      currentPage.drawText(dLine, {
+      safeDrawText(currentPage, dLine, {
         x: marginX + 35,
         y: dY,
         font: fontRegular,
@@ -773,7 +846,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
 
   let totY = currentY - 16;
   const drawTotalLine = (label: string, value: string, isBold = false, isAccent = false) => {
-    currentPage.drawText(label, {
+    safeDrawText(currentPage, label, {
       x: totalsBoxX + 14,
       y: totY,
       font: isBold ? fontBold : fontRegular,
@@ -812,7 +885,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
     drawTotalLine('Amount Paid', formatMoney(doc.amountPaid, doc.currency));
     const balanceDueLabel = 'Balance Due';
     const balanceDueStr = formatMoney(doc.amountDue, doc.currency);
-    currentPage.drawText(balanceDueLabel, {
+    safeDrawText(currentPage, balanceDueLabel, {
       x: totalsBoxX + 14,
       y: totY,
       font: fontBold,
@@ -835,7 +908,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
   let leftY = currentY - 14;
 
   if (doc.notes) {
-    currentPage.drawText('Notes:', {
+    safeDrawText(currentPage, 'Notes:', {
       x: marginX + 4,
       y: leftY,
       font: fontBold,
@@ -845,7 +918,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
     leftY -= 12;
     const noteLines = wrapText(doc.notes, leftBoxW - 8, fontRegular, 8);
     for (const nLine of noteLines.slice(0, 3)) {
-      currentPage.drawText(nLine, {
+      safeDrawText(currentPage, nLine, {
         x: marginX + 4,
         y: leftY,
         font: fontRegular,
@@ -871,7 +944,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
       borderWidth: 0.5,
     });
 
-    currentPage.drawText('Payment Instructions:', {
+    safeDrawText(currentPage, 'Payment Instructions:', {
       x: marginX + 10,
       y: instBoxY + instBoxH - 14,
       font: fontBold,
@@ -881,7 +954,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
 
     let pY = instBoxY + instBoxH - 24;
     for (const pLine of instLines.slice(0, 3)) {
-      currentPage.drawText(pLine, {
+      safeDrawText(currentPage, pLine, {
         x: marginX + 10,
         y: pY,
         font: fontRegular,
@@ -904,7 +977,7 @@ export async function generateDocumentPdfBuffer(ctx: DocumentRenderContext): Pro
     });
 
     const footerText = footerLegal ? footerLegal.replace(/\r?\n/g, ' ') : 'Thank you for your business.';
-    p.drawText(footerText.slice(0, 100), {
+    safeDrawText(p, footerText.slice(0, 100), {
       x: marginX,
       y: 24,
       font: fontRegular,

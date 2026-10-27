@@ -642,34 +642,43 @@ estimateRoutes.get('/:id/pdf', requireRole('viewer'), async (c) => {
     return c.html(html);
   }
 
-  const pdfBytes = await generateDocumentPdfBuffer({
-    document: doc,
-    client,
-    items,
-    template,
-    storage: c.env.STORAGE,
-  });
+  try {
+    const pdfBytes = await generateDocumentPdfBuffer({
+      document: doc,
+      client,
+      items,
+      template,
+      storage: c.env.STORAGE,
+    });
 
-  // Store generated PDF in R2 bucket if available
-  if (c.env.STORAGE) {
-    const stored = await putDocumentPdf(
-      c.env.STORAGE,
-      'estimate',
-      doc.documentNumber,
-      pdfBytes
-    );
-    await db
-      .update(documents)
-      .set({ pdfR2Key: stored.key, updatedAt: new Date() })
-      .where(eq(documents.id, doc.id));
+    // Store generated PDF in R2 bucket if available
+    if (c.env.STORAGE) {
+      try {
+        const stored = await putDocumentPdf(
+          c.env.STORAGE,
+          'estimate',
+          doc.documentNumber,
+          pdfBytes
+        );
+        await db
+          .update(documents)
+          .set({ pdfR2Key: stored.key, updatedAt: new Date() })
+          .where(eq(documents.id, doc.id));
+      } catch (r2Err) {
+        console.warn('[PDF Download] Non-fatal R2 archive failure:', r2Err);
+      }
+    }
+
+    return new Response(pdfBytes.buffer as ArrayBuffer, {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `inline; filename="${doc.documentNumber}.pdf"`,
+      },
+    });
+  } catch (err: any) {
+    console.error('[PDF Download] Error generating estimate PDF:', err);
+    return c.json({ error: `Failed to generate estimate PDF: ${err.message || 'Unknown error'}` }, 500);
   }
-
-  return new Response(pdfBytes.buffer as ArrayBuffer, {
-    headers: {
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `inline; filename="${doc.documentNumber}.pdf"`,
-    },
-  });
 });
 
 /**
