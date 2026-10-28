@@ -3,7 +3,7 @@ import { relations, sql } from 'drizzle-orm';
 
 export type UserRole = 'admin' | 'member' | 'viewer';
 
-export type EstimateStatus = 'draft' | 'sent' | 'approved' | 'rejected' | 'converted';
+export type EstimateStatus = 'draft' | 'sent' | 'approved' | 'accepted' | 'rejected' | 'converted';
 export type InvoiceStatus = 'draft' | 'sent' | 'partial' | 'paid' | 'overdue' | 'cancelled';
 export type DocumentStatus = EstimateStatus | InvoiceStatus;
 export type DocumentType = 'estimate' | 'invoice';
@@ -242,6 +242,13 @@ export const documents = sqliteTable(
     terms: text('terms'),
     pdfR2Key: text('pdf_r2_key'),
     attachments: text('attachments', { mode: 'json' }).$type<DocumentAttachment[]>().notNull().default([]),
+    portalToken: text('portal_token'),
+    portalTokenCreatedAt: integer('portal_token_created_at', { mode: 'timestamp_ms' }),
+    acceptedAt: integer('accepted_at', { mode: 'timestamp_ms' }),
+    acceptedBySignature: text('accepted_by_signature'),
+    acceptedByEmail: text('accepted_by_email'),
+    stripeCheckoutSessionId: text('stripe_checkout_session_id'),
+    stripePaymentIntentId: text('stripe_payment_intent_id'),
     createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
@@ -252,6 +259,7 @@ export const documents = sqliteTable(
   },
   (table) => [
     uniqueIndex('documents_number_idx').on(table.documentNumber),
+    uniqueIndex('documents_portal_token_idx').on(table.portalToken),
     index('documents_type_status_idx').on(table.type, table.status),
     index('documents_client_id_idx').on(table.clientId),
     index('documents_issue_date_idx').on(table.issueDate),
@@ -357,11 +365,129 @@ export const emailLogs = sqliteTable(
 );
 
 // ============================================================================
+// PAYMENTS LEDGER (STRIPE & MANUAL TRANSACTIONS)
+// ============================================================================
+
+export type PaymentMethod =
+  | 'stripe_card'
+  | 'stripe_ach'
+  | 'manual_check'
+  | 'manual_wire'
+  | 'manual_cash'
+  | 'manual_other';
+
+export const payments = sqliteTable(
+  'payments',
+  {
+    id: text('id').primaryKey(),
+    documentId: text('document_id')
+      .notNull()
+      .references(() => documents.id, { onDelete: 'cascade' }),
+    amount: real('amount').notNull(),
+    currency: text('currency').notNull().default('USD'),
+    paymentMethod: text('payment_method').$type<PaymentMethod>().notNull(),
+    transactionReference: text('transaction_reference'), // Stripe session ID, payment intent, check #
+    notes: text('notes'),
+    actorEmail: text('actor_email'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (table) => [
+    index('payments_doc_idx').on(table.documentId),
+    index('payments_ref_idx').on(table.transactionReference),
+    index('payments_created_at_idx').on(table.createdAt),
+  ]
+);
+
+// ============================================================================
+// RECURRING RETAINERS & SUBSCRIPTION SCHEDULES
+// ============================================================================
+
+export type RecurringFrequency = 'weekly' | 'monthly' | 'quarterly' | 'annually';
+export type RecurringStatus = 'active' | 'paused' | 'completed';
+export type RecurringAutoSendMode = 'draft_only' | 'auto_send';
+
+export const recurringSchedules = sqliteTable(
+  'recurring_schedules',
+  {
+    id: text('id').primaryKey(),
+    clientId: text('client_id')
+      .notNull()
+      .references(() => clients.id, { onDelete: 'restrict' }),
+    templateId: text('template_id').references(() => documentTemplates.id, { onDelete: 'set null' }),
+    profileName: text('profile_name').notNull(), // e.g., 'Monthly Retainer - 20 hrs Support'
+    frequency: text('frequency').$type<RecurringFrequency>().notNull().default('monthly'),
+    nextRunDate: text('next_run_date').notNull(), // ISO YYYY-MM-DD
+    lastRunDate: text('last_run_date'), // ISO YYYY-MM-DD
+    currency: text('currency').notNull().default('USD'),
+    discountType: text('discount_type').$type<DiscountType>().notNull().default('percentage'),
+    discountValue: real('discount_value').notNull().default(0),
+    subtotal: real('subtotal').notNull().default(0),
+    discountTotal: real('discount_total').notNull().default(0),
+    taxTotal: real('tax_total').notNull().default(0),
+    total: real('total').notNull().default(0),
+    notes: text('notes'),
+    terms: text('terms'),
+    status: text('status').$type<RecurringStatus>().notNull().default('active'),
+    autoSendMode: text('auto_send_mode').$type<RecurringAutoSendMode>().notNull().default('draft_only'),
+    sendAdminReminder: integer('send_admin_reminder', { mode: 'boolean' }).notNull().default(true),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (table) => [
+    index('recurring_schedules_client_idx').on(table.clientId),
+    index('recurring_schedules_next_run_idx').on(table.status, table.nextRunDate),
+  ]
+);
+
+export const recurringScheduleItems = sqliteTable(
+  'recurring_schedule_items',
+  {
+    id: text('id').primaryKey(),
+    scheduleId: text('schedule_id')
+      .notNull()
+      .references(() => recurringSchedules.id, { onDelete: 'cascade' }),
+    sortOrder: integer('sort_order').notNull().default(0),
+    name: text('name').notNull(),
+    description: text('description').default(''),
+    quantity: real('quantity').notNull().default(1),
+    unit: text('unit').notNull().default('hrs'),
+    unitPrice: real('unit_price').notNull().default(0),
+    discountType: text('discount_type').$type<DiscountType>().notNull().default('percentage'),
+    discountValue: real('discount_value').notNull().default(0),
+    taxName: text('tax_name').default('Tax'),
+    taxRate: real('tax_rate').notNull().default(0),
+    taxCompound: integer('tax_compound', { mode: 'boolean' }).notNull().default(false),
+    secondTaxName: text('second_tax_name'),
+    secondTaxRate: real('second_tax_rate').notNull().default(0),
+    secondTaxCompound: integer('second_tax_compound', { mode: 'boolean' }).notNull().default(false),
+    lineSubtotal: real('line_subtotal').notNull().default(0),
+    lineDiscountAmount: real('line_discount_amount').notNull().default(0),
+    lineTaxAmount: real('line_tax_amount').notNull().default(0),
+    lineTotal: real('line_total').notNull().default(0),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (table) => [
+    index('rec_items_schedule_idx').on(table.scheduleId),
+    index('rec_items_sort_idx').on(table.scheduleId, table.sortOrder),
+  ]
+);
+
+// ============================================================================
 // RELATIONS
 // ============================================================================
 
 export const clientsRelations = relations(clients, ({ many }) => ({
   documents: many(documents),
+  recurringSchedules: many(recurringSchedules),
 }));
 
 export const documentsRelations = relations(documents, ({ one, many }) => ({
@@ -374,11 +500,38 @@ export const documentsRelations = relations(documents, ({ one, many }) => ({
     references: [documentTemplates.id],
   }),
   items: many(documentItems),
+  payments: many(payments),
 }));
 
 export const documentItemsRelations = relations(documentItems, ({ one }) => ({
   document: one(documents, {
     fields: [documentItems.documentId],
     references: [documents.id],
+  }),
+}));
+
+export const paymentsRelations = relations(payments, ({ one }) => ({
+  document: one(documents, {
+    fields: [payments.documentId],
+    references: [documents.id],
+  }),
+}));
+
+export const recurringSchedulesRelations = relations(recurringSchedules, ({ one, many }) => ({
+  client: one(clients, {
+    fields: [recurringSchedules.clientId],
+    references: [clients.id],
+  }),
+  template: one(documentTemplates, {
+    fields: [recurringSchedules.templateId],
+    references: [documentTemplates.id],
+  }),
+  items: many(recurringScheduleItems),
+}));
+
+export const recurringScheduleItemsRelations = relations(recurringScheduleItems, ({ one }) => ({
+  schedule: one(recurringSchedules, {
+    fields: [recurringScheduleItems.scheduleId],
+    references: [recurringSchedules.id],
   }),
 }));

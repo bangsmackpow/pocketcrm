@@ -72,6 +72,7 @@ export interface DocumentDto {
   notes?: string;
   terms?: string;
   pdfR2Key?: string | null;
+  portalToken?: string | null;
   client?: {
     id: string;
     code: string;
@@ -328,4 +329,103 @@ export interface EmailLogsResponse {
 
 export async function fetchEmailLogs(): Promise<EmailLogsResponse> {
   return await apiFetch<EmailLogsResponse>('/api/admin/email-logs');
+}
+
+// Recurring Retainers & Schedules API
+export interface RecurringScheduleDto {
+  id: string;
+  clientId: string;
+  templateId?: string | null;
+  profileName: string;
+  frequency: 'weekly' | 'monthly' | 'quarterly' | 'annually';
+  nextRunDate: string;
+  lastRunDate?: string | null;
+  currency: string;
+  discountType: 'percentage' | 'fixed';
+  discountValue: number;
+  subtotal: number;
+  discountTotal: number;
+  taxTotal: number;
+  total: number;
+  notes?: string | null;
+  terms?: string | null;
+  status: 'active' | 'paused' | 'completed';
+  autoSendMode: 'draft_only' | 'auto_send';
+  sendAdminReminder: boolean;
+  createdAt: number;
+  updatedAt: number;
+  client?: {
+    id: string;
+    companyName: string;
+    contactName: string;
+    email: string;
+  };
+}
+
+export async function fetchRecurringSchedules(): Promise<RecurringScheduleDto[]> {
+  const res = await apiFetch<{ schedules: RecurringScheduleDto[] }>('/api/recurring');
+  return res.schedules || [];
+}
+
+export async function fetchRecurringSchedule(
+  id: string
+): Promise<{ schedule: RecurringScheduleDto; client: ClientDto; items: any[] }> {
+  return await apiFetch<{ schedule: RecurringScheduleDto; client: ClientDto; items: any[] }>(
+    `/api/recurring/${id}`
+  );
+}
+
+export async function createRecurringSchedule(data: {
+  clientId: string;
+  profileName: string;
+  frequency: string;
+  nextRunDate: string;
+  templateId?: string;
+  currency?: string;
+  discountType?: string;
+  discountValue?: number;
+  notes?: string;
+  terms?: string;
+  sendAdminReminder?: boolean;
+  items: any[];
+}): Promise<{ success: boolean; id: string; message: string }> {
+  return await apiFetch<{ success: boolean; id: string; message: string }>('/api/recurring', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateRecurringSchedule(
+  id: string,
+  data: any
+): Promise<{ success: boolean; message: string }> {
+  return await apiFetch<{ success: boolean; message: string }>(`/api/recurring/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function toggleRecurringSchedule(
+  id: string
+): Promise<{ success: boolean; status: string }> {
+  return await apiFetch<{ success: boolean; status: string }>(`/api/recurring/${id}/toggle`, {
+    method: 'POST',
+  });
+}
+
+export async function runRecurringScheduleNow(
+  id: string
+): Promise<{ success: boolean; message: string; invoiceNumber: string; invoiceId: string }> {
+  return await apiFetch<{ success: boolean; message: string; invoiceNumber: string; invoiceId: string }>(
+    `/api/recurring/${id}/run-now`,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+export async function deleteRecurringSchedule(id: string): Promise<void> {
+  await apiFetch(`/api/recurring/${id}`, {
+    method: 'DELETE',
+  });
 }

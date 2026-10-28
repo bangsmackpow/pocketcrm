@@ -15,6 +15,10 @@ export interface CloudflareBindings {
   APP_NAME?: string;
   EMAIL_FROM?: string;
   EMAIL_FROM_NAME?: string;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
+  STRIPE_PUBLISHABLE_KEY?: string;
+  ADMIN_NOTIFICATION_EMAIL?: string;
 }
 
 export interface AuthenticatedUser {

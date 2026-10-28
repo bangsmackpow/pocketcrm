@@ -15,6 +15,10 @@ import { importRoutes } from './routes/import';
 import { templateRoutes } from './routes/templates';
 import { itemRoutes } from './routes/items';
 import { reportRoutes } from './routes/reports';
+import { webhookRoutes } from './routes/webhooks';
+import { portalRoutes } from './routes/portal';
+import { recurringRoutes } from './routes/recurring';
+import { handleScheduledRecurringCron } from './lib/recurring-cron';
 import {
   clients,
   documents,
@@ -228,6 +232,9 @@ app.route('/api/import', importRoutes);
 app.route('/api/templates', templateRoutes);
 app.route('/api/items', itemRoutes);
 app.route('/api/reports', reportRoutes);
+app.route('/api/webhooks', webhookRoutes);
+app.route('/api/portal', portalRoutes);
+app.route('/api/recurring', recurringRoutes);
 
 // Fallback to Cloudflare Pages/Workers SPA static assets
 app.all('*', async (c) => {
@@ -243,4 +250,9 @@ app.all('*', async (c) => {
   );
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  async scheduled(event: ScheduledEvent, env: AppEnv['Bindings'], ctx: ExecutionContext) {
+    ctx.waitUntil(handleScheduledRecurringCron(env));
+  },
+};

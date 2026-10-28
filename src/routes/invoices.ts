@@ -30,6 +30,7 @@ import { recordAuditLog } from '../lib/audit';
 import { recordEmailLog } from '../lib/email-log';
 import { sendDocumentEmail } from '../lib/email';
 import { rateLimit } from '../lib/rate-limit';
+import { generatePortalToken } from '../lib/portal-token';
 
 export const invoiceRoutes = new Hono<AppEnv>();
 
@@ -206,6 +207,8 @@ invoiceRoutes.post(
       status: initialStatus,
       clientId: body.clientId,
       templateId: body.templateId ?? 'tpl_modern_slate',
+      portalToken: generatePortalToken(),
+      portalTokenCreatedAt: new Date(),
       issueDate: body.issueDate,
       dueDate: body.dueDate,
       currency: body.currency,

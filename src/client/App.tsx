@@ -40,7 +40,10 @@ import {
   MapPin,
   Calculator,
   PieChart,
+  Repeat,
+  Clock,
 } from 'lucide-react';
+import { RecurringTab } from './components/RecurringTab';
 import {
   Button,
   Card,
@@ -74,6 +77,8 @@ import {
   deleteInvoice,
   deleteEstimate,
   fetchEmailLogs,
+  fetchRecurringSchedules,
+  type RecurringScheduleDto,
   type AuthUser,
   type ManagedUser,
   type CatalogItem,
@@ -184,11 +189,22 @@ export function App() {
   const [clients, setClients] = useState<ClientDto[]>([]);
   const [estimates, setEstimates] = useState<DocumentDto[]>([]);
   const [invoices, setInvoices] = useState<DocumentDto[]>([]);
+  const [recurringSchedules, setRecurringSchedules] = useState<RecurringScheduleDto[]>([]);
   const [templates, setTemplates] = useState<TemplateDto[]>([]);
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
   const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
   const [emailLogsData, setEmailLogsData] = useState<EmailLogsResponse | null>(null);
   const [emailLogsFilter, setEmailLogsFilter] = useState('');
+  const [invoiceStatusFilter, setInvoiceStatusFilter] = useState<string>('all');
+
+  const filteredInvoices = invoices.filter((inv) => {
+    if (invoiceStatusFilter === 'all') return true;
+    if (invoiceStatusFilter === 'draft') return inv.status === 'draft';
+    if (invoiceStatusFilter === 'sent') return inv.status === 'sent';
+    if (invoiceStatusFilter === 'unpaid') return inv.amountDue > 0;
+    if (invoiceStatusFilter === 'paid') return inv.status === 'paid';
+    return inv.status === invoiceStatusFilter;
+  });
 
   // Financial Reports & Iowa State Tax Analytics State
   const [reportYear, setReportYear] = useState<string>('all');
@@ -419,7 +435,8 @@ export function App() {
         Promise<{ templates: TemplateDto[] }>,
         Promise<CatalogItem[]>,
         Promise<ManagedUser[]>,
-        Promise<EmailLogsResponse>
+        Promise<EmailLogsResponse>,
+        Promise<RecurringScheduleDto[]>
       ] = [
         apiFetch<DashboardData>('/api/dashboard'),
         apiFetch<{ clients: ClientDto[] }>('/api/clients'),
@@ -431,14 +448,16 @@ export function App() {
         isManagerOrAdmin
           ? fetchEmailLogs()
           : Promise.resolve({ logs: [], summary: { total: 0, delivered: 0, simulated: 0, failed: 0 } }),
+        fetchRecurringSchedules().catch(() => []),
       ];
 
-      const [dashRes, cliRes, estRes, invRes, tplRes, itemsRes, usersRes, emailLogsRes] = await Promise.all(promises);
+      const [dashRes, cliRes, estRes, invRes, tplRes, itemsRes, usersRes, emailLogsRes, recRes] = await Promise.all(promises);
 
       setDashboard(dashRes);
       setClients(cliRes.clients || []);
       setEstimates(estRes.estimates || []);
       setInvoices(invRes.invoices || []);
+      setRecurringSchedules(recRes || []);
       setTemplates(tplRes.templates || []);
       setCatalogItems(itemsRes || []);
       setManagedUsers(usersRes || []);
@@ -1525,6 +1544,10 @@ export function App() {
                 <Receipt className="w-3.5 h-3.5" />
                 Invoices ({invoices.length})
               </TabsTrigger>
+              <TabsTrigger value="recurring">
+                <Repeat className="w-3.5 h-3.5" />
+                Recurring ({recurringSchedules.length})
+              </TabsTrigger>
               <TabsTrigger value="reports">
                 <BarChart3 className="w-3.5 h-3.5" />
                 Tax & Reports
@@ -1551,6 +1574,32 @@ export function App() {
 
           {/* 1. DASHBOARD TAB */}
           <TabsContent value="dashboard" className="space-y-6">
+            {/* Draft Invoices Review Reminder Banner */}
+            {invoices.filter((i) => i.status === 'draft').length > 0 && (
+              <div className="rounded-xl border border-blue-200 bg-blue-50/70 dark:border-blue-900/60 dark:bg-blue-950/40 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <Clock className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0" />
+                  <div>
+                    <div className="text-sm font-semibold text-blue-950 dark:text-blue-100">
+                      {invoices.filter((i) => i.status === 'draft').length} Draft {invoices.filter((i) => i.status === 'draft').length === 1 ? 'Invoice' : 'Invoices'} Ready for Review
+                    </div>
+                    <div className="text-xs text-blue-700 dark:text-blue-400">
+                      Generated from recurring schedules or composer. Review and finalize before sending to clients.
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('invoices');
+                    setInvoiceStatusFilter('draft');
+                  }}
+                  className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer shrink-0 transition-colors"
+                >
+                  Review Drafts &rarr;
+                </button>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <Card className="p-5">
                 <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -2365,6 +2414,18 @@ export function App() {
                               <ExternalLink className="w-3 h-3" />
                               Preview
                             </a>
+                            {est.portalToken && (
+                              <a
+                                href={`/portal/${est.portalToken}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 rounded-md border border-purple-200 dark:border-purple-800 px-2.5 py-1.5 text-xs text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/40"
+                                title="Open customer-facing portal link"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                                Portal
+                              </a>
+                            )}
                             <a
                               href={`/api/estimates/${est.id}/pdf`}
                               target="_blank"
@@ -2500,6 +2561,18 @@ export function App() {
                           <Download className="w-3 h-3" />
                           PDF
                         </a>
+                        {est.portalToken && (
+                          <a
+                            href={`/portal/${est.portalToken}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 rounded-md border border-purple-200 dark:border-purple-800 px-2.5 py-1.5 text-xs text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/40"
+                            title="Open customer-facing portal link"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            Portal
+                          </a>
+                        )}
                         {currentUser?.role === 'admin' && (
                           <Button
                             size="sm"
@@ -2521,7 +2594,7 @@ export function App() {
           {/* 4. INVOICES TAB */}
           <TabsContent value="invoices">
             <Card className="p-5">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
                 <div>
                   <h2 className="text-base font-bold text-slate-900 dark:text-white">
                     Invoices & Receivables Workflow
@@ -2529,6 +2602,37 @@ export function App() {
                   <p className="text-xs text-slate-500 dark:text-slate-400">
                     State Transitions: Draft → Sent → Partial / Paid → Overdue → Cancelled
                   </p>
+                </div>
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                  {(['all', 'draft', 'sent', 'unpaid', 'paid'] as const).map((filterKey) => {
+                    const count = invoices.filter((inv) => {
+                      if (filterKey === 'all') return true;
+                      if (filterKey === 'draft') return inv.status === 'draft';
+                      if (filterKey === 'sent') return inv.status === 'sent';
+                      if (filterKey === 'unpaid') return inv.amountDue > 0;
+                      if (filterKey === 'paid') return inv.status === 'paid';
+                      return inv.status === filterKey;
+                    }).length;
+                    const isActive = invoiceStatusFilter === filterKey;
+                    const label = filterKey === 'all' ? 'All' : filterKey.charAt(0).toUpperCase() + filterKey.slice(1);
+                    return (
+                      <button
+                        key={filterKey}
+                        type="button"
+                        onClick={() => setInvoiceStatusFilter(filterKey)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-medium cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+                          isActive
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
+                        }`}
+                      >
+                        <span>{label}</span>
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${isActive ? 'bg-blue-700 text-white' : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300'}`}>
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -2547,7 +2651,14 @@ export function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                    {invoices.map((inv) => (
+                    {filteredInvoices.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-8 text-center text-xs text-slate-400 italic">
+                          No invoices found matching status filter &ldquo;{invoiceStatusFilter}&rdquo;.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredInvoices.map((inv) => (
                       <tr key={inv.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
                         <td className="py-3 px-3 font-mono font-bold text-blue-600 dark:text-blue-400">
                           {inv.documentNumber}
@@ -2668,6 +2779,18 @@ export function App() {
                               <ExternalLink className="w-3 h-3" />
                               Preview
                             </a>
+                            {inv.portalToken && (
+                              <a
+                                href={`/portal/${inv.portalToken}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 rounded-md border border-purple-200 dark:border-purple-800 px-2.5 py-1.5 text-xs text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/40"
+                                title="Open customer-facing portal link"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                                Portal
+                              </a>
+                            )}
                             <a
                               href={`/api/invoices/${inv.id}/pdf`}
                               target="_blank"
@@ -2692,17 +2815,17 @@ export function App() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                    )))}
                   </tbody>
                 </table>
               </div>
 
               {/* Mobile Responsive Invoices Cards */}
               <div className="sm:hidden space-y-3">
-                {invoices.length === 0 ? (
-                  <div className="py-8 text-center text-xs text-slate-400 italic">No invoices created yet.</div>
+                {filteredInvoices.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-slate-400 italic">No invoices matching &ldquo;{invoiceStatusFilter}&rdquo;.</div>
                 ) : (
-                  invoices.map((inv) => (
+                  filteredInvoices.map((inv) => (
                     <div
                       key={inv.id}
                       className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-3"
@@ -2803,6 +2926,18 @@ export function App() {
                           <Download className="w-3 h-3" />
                           PDF
                         </a>
+                        {inv.portalToken && (
+                          <a
+                            href={`/portal/${inv.portalToken}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 rounded-md border border-purple-200 dark:border-purple-800 px-2.5 py-1.5 text-xs text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/40"
+                            title="Open customer-facing portal link"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            Portal
+                          </a>
+                        )}
                         {currentUser?.role === 'admin' && (
                           <Button
                             size="sm"
@@ -2819,6 +2954,23 @@ export function App() {
                 )}
               </div>
             </Card>
+          </TabsContent>
+
+          {/* 4.5 RECURRING RETAINERS & SUBSCRIPTIONS TAB */}
+          <TabsContent value="recurring">
+            <RecurringTab
+              schedules={recurringSchedules}
+              clients={clients}
+              catalogItems={catalogItems}
+              currentUser={currentUser}
+              draftInvoiceCount={invoices.filter((i) => i.status === 'draft').length}
+              onRefresh={refreshWorkspace}
+              onNotify={notify}
+              onNavigateToDraftInvoices={() => {
+                setActiveTab('invoices');
+                setInvoiceStatusFilter('draft');
+              }}
+            />
           </TabsContent>
 
           {/* 5. REPORTS & STATE TAX ANALYTICS TAB */}
@@ -4863,6 +5015,23 @@ export function App() {
                   <div>
                     <div className="font-semibold text-slate-900 dark:text-white">Tax & Financial Reports</div>
                     <div className="text-[11px] text-slate-500 dark:text-slate-400">View Iowa apportionment, sales tax & A/R aging</div>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileFabMenuOpen(false);
+                    setActiveTab('recurring');
+                    setPageView('tabs');
+                  }}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 active:bg-slate-200 text-left transition-colors cursor-pointer"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-teal-100 dark:bg-teal-900/50 flex items-center justify-center text-teal-600 dark:text-teal-400 shrink-0">
+                    <Repeat className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-slate-900 dark:text-white">Recurring Retainers</div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">Automated recurring billing schedules</div>
                   </div>
                 </button>
               </div>

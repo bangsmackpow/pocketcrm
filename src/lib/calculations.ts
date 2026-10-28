@@ -185,9 +185,10 @@ export function calculateDocumentTotals(
 // ============================================================================
 
 const ESTIMATE_TRANSITIONS: Record<EstimateStatus, EstimateStatus[]> = {
-  draft: ['sent', 'approved', 'rejected'],
-  sent: ['approved', 'rejected', 'draft'],
+  draft: ['sent', 'approved', 'accepted', 'rejected'],
+  sent: ['approved', 'accepted', 'rejected', 'draft'],
   approved: ['converted', 'sent'],
+  accepted: ['converted', 'sent'],
   rejected: ['draft', 'sent'],
   converted: [],
 };

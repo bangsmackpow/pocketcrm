@@ -14,6 +14,11 @@
     "not_found_handling": "single-page-application",
     "binding": "ASSETS"
   },
+  "triggers": {
+    "crons": [
+      "0 14 * * *"
+    ]
+  },
   "vars": {
     "APP_NAME": "PocketCRM",
     "BETTER_AUTH_URL": "https://pocketcrm.builtnetworks.com",

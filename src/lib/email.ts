@@ -30,8 +30,9 @@ function buildDocumentEmailHtml(options: {
   recipientName: string;
   customMessage?: string;
   companyName: string;
+  portalUrl?: string;
 }): string {
-  const { ctx, recipientName, customMessage, companyName } = options;
+  const { ctx, recipientName, customMessage, companyName, portalUrl } = options;
   const { document: doc, client, items, template } = ctx;
   const isInvoice = doc.type === 'invoice';
   const docTypeLabel = isInvoice ? 'Invoice' : 'Estimate / Quote';
@@ -173,6 +174,18 @@ function buildDocumentEmailHtml(options: {
         <div style="font-weight: 600; color: #0f172a; margin-bottom: 4px;">Payment Remittance Instructions:</div>
         <div>${escapeHtml(paymentInstructions)}</div>
       </div>
+
+      ${
+        portalUrl
+          ? `<!-- Review & Pay / View Estimate CTA Button -->
+      <div style="text-align: center; margin: 32px 0 16px 0;">
+        <a href="${portalUrl}" target="_blank" rel="noopener noreferrer" style="background-color: #2563eb; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 15px; display: inline-block; box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.25);">
+          ${isInvoice ? 'Review &amp; Pay Invoice Online &rarr;' : 'Review &amp; Accept Quote Online &rarr;'}
+        </a>
+        <div style="font-size: 11px; color: #94a3b8; margin-top: 8px;">No login required &bull; Fast, secure checkout</div>
+      </div>`
+          : ''
+      }
     </div>
 
     <!-- Footer -->
@@ -234,12 +247,16 @@ export async function sendDocumentEmail(options: SendDocumentEmailOptions): Prom
     const pdfBase64 = Buffer.from(pdfBuffer).toString('base64');
     const filename = `${doc.documentNumber}.pdf`;
 
+    const baseUrl = env.BETTER_AUTH_URL || 'https://pocketcrm.builtnetworks.com';
+    const portalUrl = doc.portalToken ? `${baseUrl}/portal/${doc.portalToken}` : undefined;
+
     // Build HTML email body
     const htmlContent = buildDocumentEmailHtml({
       ctx,
       recipientName,
       customMessage,
       companyName: senderName,
+      portalUrl,
     });
 
     // Build Plain Text fallback
@@ -250,7 +267,7 @@ export async function sendDocumentEmail(options: SendDocumentEmailOptions): Prom
       `Issue Date: ${doc.issueDate}  |  Due Date: ${doc.dueDate}`,
       `Total: ${formatMoney(doc.total, doc.currency)}`,
       isInvoice ? `Balance Due: ${formatMoney(doc.amountDue, doc.currency)}` : '',
-      '',
+      portalUrl ? `\nView & Pay Online:\n${portalUrl}\n` : '',
       customMessage ? `Note: ${customMessage}\n` : '',
       `Payment Instructions: ${ctx.template?.paymentInstructions || 'See attached PDF'}`,
       '',
