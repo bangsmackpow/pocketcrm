@@ -14,3 +14,4 @@ dist/
 docs/legacy/
 scripts/
 *.sql
+!src/db/migrations/*.sql

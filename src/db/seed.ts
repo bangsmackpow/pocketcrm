@@ -21,16 +21,36 @@ async function seed() {
   console.log(`[Seed] Initializing offline SQLite database at: ${dbPath}`);
   const { db, raw } = await createLocalSqliteClient(dbPath);
 
-  // Apply initial migration SQL if tables don't exist
-  const migrationPath = path.resolve(process.cwd(), 'src/db/migrations/0000_initial_schema.sql');
-  if (fs.existsSync(migrationPath)) {
-    const sqlContent = fs.readFileSync(migrationPath, 'utf-8');
-    const statements = sqlContent
-      .split('--> statement-breakpoint')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    for (const stmt of statements) {
-      raw.exec(stmt);
+  // Apply all migration SQL files in sequence if tables don't exist
+  const migrationsDir = path.resolve(process.cwd(), 'src/db/migrations');
+  if (fs.existsSync(migrationsDir)) {
+    const migrationFiles = fs
+      .readdirSync(migrationsDir)
+      .filter((file) => file.endsWith('.sql'))
+      .sort();
+
+    for (const file of migrationFiles) {
+      const sqlContent = fs.readFileSync(path.join(migrationsDir, file), 'utf-8');
+      const statements = sqlContent
+        .split('--> statement-breakpoint')
+        .flatMap((s) => s.split(';'))
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      for (const stmt of statements) {
+        try {
+          raw.exec(stmt);
+        } catch (err: any) {
+          const msg = (err?.message || '').toLowerCase();
+          if (
+            msg.includes('duplicate column name') ||
+            msg.includes('already exists')
+          ) {
+            continue;
+          }
+          console.warn(`[Seed Warning] Statement failed in ${file}: ${err.message}`);
+        }
+      }
     }
   }
 
@@ -218,6 +238,7 @@ async function seed() {
       amountDue: 8227,
       notes: 'Q4 Dedicated Edge Infrastructure Retainer & Security Audit.',
       terms: 'Net 30 days',
+      portalToken: 'portal_sample_inv_001',
       createdBy: 'usr_admin_01',
       createdAt: now,
       updatedAt: now,
@@ -296,6 +317,7 @@ async function seed() {
       amountDue: 4590,
       notes: 'Custom telemetry pipeline & automated reporting portal.',
       terms: 'Valid for 30 days',
+      portalToken: 'portal_sample_est_001',
       createdBy: 'usr_member_01',
       createdAt: now,
       updatedAt: now,
