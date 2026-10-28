@@ -33,6 +33,7 @@ This document outlines the strategic research conducted across the top 3 CRM and
 * **Stack Implementation**: Cloudflare D1 `time_entries` table (`id`, `clientId`, `hours`, `rate`, `description`, `invoiceId`, `date`, `status`).
 
 ### 2. Project Budgets, Milestones & Retainers
+* **Status**: **Retainers Completed** ✅ *(Recurring Retainers & Schedules with daily Cloudflare Cron Triggers, Draft for Review mode, and recurring_schedules / recurring_schedule_items D1 tables fully implemented and deployed)*.
 * **The Need**: Technical contracts generally follow 3 formats:
   1. *Time & Materials with a cap* (e.g., "Architecture review — Not to exceed 40 hrs").
   2. *Milestone billing* (e.g., "50% upfront, 50% on cutover").
@@ -40,16 +41,18 @@ This document outlines the strategic research conducted across the top 3 CRM and
 * **Feature Scope**:
   - Lightweight "Projects" / "Engagements" layer under each client with budget parameters.
   - Visual budget burn progress bar (`28 / 40 hrs used — 70%`).
-  - Recurring invoice generation for ongoing retainer clients.
-* **Stack Implementation**: Cloudflare D1 `projects` table linking clients and documents; automated monthly drafts via Cloudflare Cron Triggers.
+  - Recurring retainer schedule management and draft review generation.
+* **Stack Implementation**: Cloudflare D1 `recurring_schedules` table linking clients and templates; automated daily drafts via Cloudflare Cron Triggers (`0 14 * * *`).
 
-### 3. Online Payment Gateway Integration (Stripe Checkout & ACH)
+### 3. Online Payment Gateway Integration (Stripe Checkout & ACH) & Public Client Portal
+* **Status**: **Completed** ✅ *(Edge Stripe Checkout, Webhook reconciliation, 1-Click Estimate Acceptance with digital signature, and public token portal `/portal/:token` fully deployed)*.
 * **The Need**: Invoices with only bank wire instructions or checks take weeks to clear. Invoices with a direct "Pay Now" button get settled in days.
 * **Feature Scope**:
-  - Direct "Pay Invoice" link on invoice emails and PDF documents.
-  - Supports Credit Cards and low-fee direct ACH bank transfers (via Stripe Checkout).
-  - Automated webhook (`/api/webhooks/stripe`) that updates invoice status from `sent` to `paid`, logs the transaction, and delivers a payment receipt.
-* **Stack Implementation**: Stripe Checkout Session API + Cloudflare Worker webhook handler.
+  - Direct "Review & Pay" / "View Estimate" links on invoice emails, preview documents, and portal.
+  - Supports Credit Cards, Apple Pay, Google Pay, and low-fee direct ACH bank transfers (via Stripe Checkout).
+  - Automated edge webhook (`/api/webhooks/stripe`) that verifies HMAC-SHA256 signatures, updates invoice status from `sent` to `paid`, writes payments ledger records, and updates balance due.
+  - 1-Click digital acceptance for estimates that auto-converts to an invoice and alerts the business owner.
+* **Stack Implementation**: Edge Stripe REST API + Cloudflare Webhook handler + Standalone `PortalApp.tsx` client.
 
 ### 4. Automated Payment Reminders & Accounts Receivable (AR) Aging
 * **Status**: **Partially Completed** ✅ *(A/R Aging Schedule & Itemized Overdue Buckets implemented in Tax & Reports Engine; Cron-based automated reminder emails queued for next iteration)*.

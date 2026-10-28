@@ -10,10 +10,13 @@ PocketCRM is an edge-native, offline-capable CRM, quoting, invoicing, and tax an
 
 | Component | Technology | Role & Details |
 | :--- | :--- | :--- |
-| **Compute / API Gateway** | **Cloudflare Workers** via **Hono** | Global serverless edge compute with zero-cold-start latency. Handles routing, auth, PDF rendering, email dispatch, and reporting. |
-| **Database** | **Cloudflare D1** via **Drizzle ORM** | Distributed SQLite at the edge. Schema managed in `src/db/schema.ts`. |
+| **Compute / API Gateway** | **Cloudflare Workers** via **Hono** | Global serverless edge compute with zero-cold-start latency. Handles routing, auth, PDF rendering, email dispatch, cron triggers, and reporting. |
+| **Database** | **Cloudflare D1** via **Drizzle ORM** | Distributed SQLite at the edge. Schema managed in `src/db/schema.ts` and migrations in `src/db/migrations/`. |
 | **Object Storage** | **Cloudflare R2** | S3-compatible asset store for business logos, document attachments, and rendered PDF snapshots. |
-| **Email Delivery** | **Cloudflare Worker Email (`env.EMAIL`)** | Direct edge email dispatch with MIME multipart generator (`mimetext`) and binary PDF attachments. |
+| **Email Delivery** | **Cloudflare Worker Email (`env.EMAIL`)** | Direct edge email dispatch with MIME multipart generator (`mimetext`), binary PDF attachments, and 1-click portal action links. |
+| **Online Payments** | **Stripe Checkout & Webhooks** | Edge-native REST API integration for Credit Cards, Apple Pay, Google Pay, and low-fee US ACH Direct Debit. |
+| **Recurring Billing** | **Cloudflare Cron Triggers (`0 14 * * *`)** | Daily edge scheduled task advancing recurring retainer schedules and generating draft review invoices. |
+| **Public Client Portal** | **React 19 SPA + Crypto Tokens** | Secure, unauthenticated customer view (`/portal/:token`) for quote sign-off and instant payment. |
 | **Authentication & RBAC** | **Better Auth + Drizzle D1** | Session tokens, password hashing, and role-based permissions (`admin`, `member`, `viewer`). |
 | **Frontend Framework** | **React 19 + Vite** | Single Page Application with client-side routing, optimistic UI, and instant search. |
 | **Styling** | **Tailwind CSS + Lucide Icons** | Dark/light theme support, mobile notch safe-area handling (`pb-safe`), and responsive breakpoints. |
@@ -50,14 +53,17 @@ npm run db:migrate:remote    # Apply migrations to live Cloudflare D1
 ```text
 src/
 ├── db/
-│   ├── schema.ts            # Canonical Drizzle ORM schema (Users, Clients, Documents, Items, Templates, Logs)
-│   └── migrations/          # Versioned D1 SQL migration files
+│   ├── schema.ts            # Canonical Drizzle ORM schema (Users, Clients, Documents, Items, Templates, Payments, Recurring)
+│   └── migrations/          # Versioned D1 SQL migration files (tracked in git)
 ├── lib/
 │   ├── auth.ts              # Better Auth initialization, RBAC helper (requireRole), and session middleware
 │   ├── calculations.ts      # Pure math engine for line items, discounts, dual taxes, and roundCurrency
 │   ├── email.ts             # Cloudflare Workers MIME email builder & attachment encoder
 │   ├── pdf.ts               # Pure TypeScript edge PDF 1.4 binary generator (no headless browser needed)
+│   ├── portal-token.ts      # High-entropy 128-bit cryptographic portal token generator
 │   ├── r2.ts                # Cloudflare R2 bucket reader & writer
+│   ├── recurring-cron.ts    # Edge scheduled cron handler, retainer schedule advancement, and draft generation
+│   ├── stripe.ts            # Stripe REST API checkout generator & Web Crypto HMAC-SHA256 signature verification
 │   └── audit.ts             # Immutable audit trail logger
 ├── routes/
 │   ├── auth.ts              # Login, logout, session verification, user management
@@ -65,13 +71,19 @@ src/
 │   ├── estimates.ts         # Estimate workflows & 1-click conversion to invoices
 │   ├── invoices.ts          # Invoice workflows, payment recording, PDF streaming, email dispatch
 │   ├── items.ts             # Service & product catalog
+│   ├── portal.ts            # Public client portal endpoints (view doc, stream PDF, checkout, accept/decline)
+│   ├── recurring.ts         # Recurring schedules CRUD, pause/resume, and Run Now manual trigger
 │   ├── reports.ts           # State tax analytics, Iowa apportionment, A/R aging & CSV exports
-│   └── templates.ts         # Visual document templates & branding
+│   ├── templates.ts         # Visual document templates & branding
+│   └── webhooks.ts          # Stripe edge webhook listener (checkout.session.completed, auto-reconciliation)
 ├── client/
+│   ├── components/
+│   │   └── RecurringTab.tsx # Recurring retainers & subscription schedules management UI
 │   ├── App.tsx              # Primary UI container (tabs, composer, modals, mobile bottom bar)
-│   ├── main.tsx             # React DOM root & Service Worker registration
+│   ├── PortalApp.tsx        # Standalone customer-facing portal view (Stripe checkout & quote digital sign-off)
+│   ├── main.tsx             # React DOM root, portal routing & Service Worker registration
 │   └── styles.css           # Global CSS, dark theme rules, safe-area utilities
-└── index.ts                 # Hono app router & Cloudflare Worker entry point
+└── index.ts                 # Hono app router, Cloudflare Worker entry point & scheduled() cron export
 ```
 
 ---
@@ -119,11 +131,22 @@ PocketCRM operates on a **$5/month Cloudflare Workers Paid plan**. To maintain z
 * **Read-Amplification Defense**: Guard all reporting and data endpoints with edge rate limiting (max 120 req/min per IP) and Bot Fight Mode to prevent infinite polling loops or scrapers from inflating Worker requests beyond the 10M included monthly quota.
 * **CPU & Memory Budget**: Enforce client-side image resizing on logo uploads (max 500 KB / 1024x1024) to keep edge PDF rendering fast and well inside the 128 MB Worker RAM envelope.
 
+### Rule 7: Public Client Portal & Cryptographic Tokens
+* The client portal (`/portal/:token` and `/api/portal/:token/*`) is deliberately unauthenticated to eliminate client login friction.
+* **Security via Entropy**: Access is guarded exclusively by a 128-bit cryptographically secure hex token (`generatePortalToken()`).
+* **Information Boundary**: The portal API only exposes information relevant to that specific document, the associated client's basic billing details, and the workspace's visual template styles. It must **never** leak user passwords, internal audit logs, other clients' records, or private workspace configurations.
+
+### Rule 8: Recurring Engine & Cloudflare Cron Invariants
+* **Draft for Review Default**: PocketCRM generates invoices from recurring retainer schedules in `draft` status (`autoSendMode === 'draft_only'`). Invoices must **never** be auto-sent to clients without an explicit administrative setting.
+* **Idempotency & Date Advancement**: When the scheduled cron handler (`0 14 * * *`) processes a due schedule, it must atomically generate the draft invoice and immediately advance `nextRunDate` based on the frequency (`weekly`, `bi-weekly`, `monthly`, `quarterly`, `semi-annually`, `annually`) to prevent duplicate billing.
+* **Owner Notification**: Generating recurring drafts triggers an administrative review email to Curtis (`ADMIN_NOTIFICATION_EMAIL` or fallback) and surfaces a high-visibility review banner on the dashboard.
+
 ---
 
 ## 5. Reference Architectural Documents
 
 Before designing or implementing new major modules, review the existing architectural roadmaps:
+* [`docs/superpowers/plans/2026-10-27-portal-stripe-and-recurring-cron.md`](file:///C:/Users/curtis/Desktop/dev/pocketcrm/docs/superpowers/plans/2026-10-27-portal-stripe-and-recurring-cron.md) — Public client portal, Stripe checkout, digital quote acceptance, and recurring cron architecture.
 * [`CUSTOMER_AUTO_FEED_PLAN.md`](file:///C:/Users/curtis/Desktop/dev/pocketcrm/CUSTOMER_AUTO_FEED_PLAN.md) — Customer discovery, public registry APIs (SAM.gov, OpenCorporates, Google Places, Apollo), and inbound webhook ingestion.
 * [`MULTITENANT_PLAN.md`](file:///C:/Users/curtis/Desktop/dev/pocketcrm/MULTITENANT_PLAN.md) — Multi-tenant D1/R2 scaling, tenant isolation, and single-tenant database extraction procedures.
 * [`FEATURE_ADD.md`](file:///C:/Users/curtis/Desktop/dev/pocketcrm/FEATURE_ADD.md) — Prioritized product feature backlog and wishlist.

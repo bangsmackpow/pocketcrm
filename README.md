@@ -12,12 +12,24 @@ Deployed live on Cloudflare Edge: **[pocketcrm.builtnetworks.com](https://pocket
 - **Dedicated Full-Page Document Composer**: Line-item level editing with live discount, dual-tax, and subtotal calculations.
 - **Service Catalog**: Quick item auto-fill from an itemized product & services inventory.
 - **Document Lifecycles**:
-  - *Estimates / Quotes*: `Draft` $\rightarrow$ `Sent` $\rightarrow$ `Approved` / `Rejected` $\rightarrow$ 1-Click Conversion to Invoice.
+  - *Estimates / Quotes*: `Draft` $\rightarrow$ `Sent` $\rightarrow$ `Approved` / `Accepted` / `Rejected` $\rightarrow$ 1-Click Conversion to Invoice.
   - *Invoices*: `Draft` $\rightarrow$ `Sent` $\rightarrow$ `Partial` / `Paid` $\rightarrow$ `Overdue` $\rightarrow$ `Cancelled`.
 - **Edge PDF Generation**: High-performance, pixel-perfect PDF 1.4 rendering executed directly inside Cloudflare Workers without headless browsers.
-- **Native Cloudflare Email Dispatch**: Dispatch invoices and quotes with embedded PDF attachments directly from the edge via Cloudflare Workers `env.EMAIL` binding.
+- **Native Cloudflare Email Dispatch**: Dispatch invoices and quotes with embedded PDF attachments and 1-click portal action links directly from the edge via Cloudflare Workers `env.EMAIL` binding.
 
-### 2. State-Specific & Iowa Tax Analytics
+### 2. Public Client Portal & Online Collections
+- **Client Portal (`/portal/:token`)**: Frictionless, unauthenticated customer view guarded by 128-bit cryptographic tokens.
+- **Edge-Native Stripe Checkout**: Seamlessly accept Credit Cards, Apple Pay, Google Pay, and low-fee US ACH Direct Debit without heavy Node SDKs.
+- **Automated Payment Webhooks**: Cloudflare Workers edge webhook handler (`/api/webhooks/stripe`) verifying HMAC-SHA256 signatures via Web Crypto, auto-marking invoices as paid, recording balance due, and logging immutable audit records.
+- **1-Click Estimate Acceptance**: Customers sign estimates online with digital name sign-off. PocketCRM transitions the estimate to `accepted`, creates a linked invoice, and alerts the owner via email.
+
+### 3. Automated Recurring Retainers & Schedules
+- **Draft for Review Mode**: Adheres to strict SMB safety—recurring retainer schedules automatically generate **draft invoices** rather than auto-sending to clients prematurely.
+- **Cloudflare Native Cron Trigger**: Scheduled daily at 14:00 UTC (`0 14 * * *`) at zero marginal compute cost on the Cloudflare Workers paid plan.
+- **Owner Review Banner**: The Dashboard and Invoices tabs alert you with a prominent banner when draft invoices are waiting for your review.
+- **Dedicated Recurring Tab**: Full retainer schedule lifecycle (weekly to annual frequencies, pause/resume, and on-demand "Run Now" execution).
+
+### 4. State-Specific & Iowa Tax Analytics
 - **Iowa Single-Sales-Factor Apportionment**: Automatically isolates Iowa in-state gross receipts from out-of-state revenue (Form IA 1040 Schedule C / IA 1120).
 - **Cash vs. Accrual Accounting Method**: Real-time toggling between cash received vs. invoices billed.
 - **Sales Tax & Local Option (LOST) Breakdown**: Itemized 6% Iowa State Sales Tax and 1% Local Option Sales Tax (e.g. Union County / Creston) collections.
@@ -25,13 +37,13 @@ Deployed live on Cloudflare Edge: **[pocketcrm.builtnetworks.com](https://pocket
 - **Accounts Receivable (A/R) Aging**: 5-bucket aging schedule (`Current`, `1–30`, `31–60`, `61–90`, `90+` days overdue).
 - **1-Click CPA Tax Packet CSV Export**: Generates an audit-ready tax and invoice register spreadsheet.
 
-### 3. Progressive Web App (PWA) & Mobile-First UX
+### 5. Progressive Web App (PWA) & Mobile-First UX
 - **Installable Native App**: Custom Web App Manifest (`standalone` mode) and full icon suite for iOS & Android home screens.
 - **Offline Shell**: Service Worker with Cache-First static asset caching and Network-First document routing.
 - **Thumb-Zone Navigation**: Fixed bottom navigation bar with an elevated **Floating Action Button (+)** for instant creation of Invoices, Quotes, and Clients.
 - **Responsive Mobile Cards**: Data-dense desktop tables gracefully convert to swipeable, touch-friendly mobile cards on viewports $<640\text{px}$.
 
-### 4. Enterprise Security & Auditability
+### 6. Enterprise Security & Auditability
 - **Role-Based Access Control (RBAC)**: Fine-grained permissions (`admin`, `member`, `viewer`) managed by Better Auth.
 - **Re-Authentication for High-Risk Actions**: Admin password confirmation required for permanent document deletions.
 - **Immutable Audit Trail**: Structured event logging recording actor, entity ID, action, and timestamp.
@@ -44,16 +56,19 @@ Deployed live on Cloudflare Edge: **[pocketcrm.builtnetworks.com](https://pocket
 ```text
 ├── src/
 │   ├── db/
-│   │   ├── schema.ts            # Drizzle SQLite/D1 schema (clients, documents, document_items, templates, audit_logs, email_logs)
+│   │   ├── schema.ts            # Drizzle SQLite/D1 schema (clients, documents, items, templates, logs, payments, recurring)
 │   │   ├── client.ts            # Dual-driver factory: Cloudflare D1 (Worker) + better-sqlite3 (offline tooling)
-│   │   ├── seed.ts              # Local database seeder
-│   │   └── migrations/          # D1 SQL migration files
+│   │   ├── seed.ts              # Local database seeder with sequential migration runner
+│   │   └── migrations/          # Versioned D1 SQL migration files (tracked in git)
 │   ├── lib/
 │   │   ├── auth.ts              # Better Auth + Drizzle D1 adapter & session middleware
 │   │   ├── calculations.ts      # Tax, discount, and document total engine
-│   │   ├── email.ts             # Native Cloudflare Email dispatcher with MIME multipart PDF attachments
+│   │   ├── email.ts             # Native Cloudflare Email dispatcher with MIME multipart PDF attachments & portal links
 │   │   ├── pdf.ts               # Pure TypeScript edge PDF 1.4 binary generator
+│   │   ├── portal-token.ts      # 128-bit cryptographic portal token generator
 │   │   ├── r2.ts                # Cloudflare R2 bucket integration for assets & documents
+│   │   ├── recurring-cron.ts    # Recurring retainer schedule advancement & draft invoice generation
+│   │   ├── stripe.ts            # Edge Stripe Checkout & Web Crypto HMAC-SHA256 signature verification
 │   │   └── audit.ts             # Immutable audit logging helper
 │   ├── routes/
 │   │   ├── auth.ts              # User authentication, session management, and RBAC
@@ -62,15 +77,29 @@ Deployed live on Cloudflare Edge: **[pocketcrm.builtnetworks.com](https://pocket
 │   │   ├── estimates.ts         # Estimates & quote approval lifecycles
 │   │   ├── invoices.ts          # Invoice lifecycles, payment recording, and PDF streaming
 │   │   ├── items.ts             # Service catalog management
+│   │   ├── portal.ts            # Public client portal endpoints (view, PDF stream, checkout, accept/decline)
+│   │   ├── recurring.ts         # Recurring retainer schedules CRUD & manual Run Now trigger
 │   │   ├── reports.ts           # State tax analytics, Iowa apportionment, A/R aging & CSV exports
-│   │   └── templates.ts         # Visual document templates & branding
+│   │   ├── templates.ts         # Visual document templates & branding
+│   │   └── webhooks.ts          # Stripe webhook reconciliation listener
 │   ├── client/                  # React 19 + Tailwind CSS + Lucide Icons SPA
+│   │   ├── components/
+│   │   │   └── RecurringTab.tsx # Recurring retainers & subscription schedules UI
 │   │   ├── App.tsx              # Main application shell, tabs, bottom bar, and view logic
-│   │   ├── main.tsx             # Entry point & PWA service worker registration
+│   │   ├── PortalApp.tsx        # Customer-facing public portal SPA (pay invoice, sign estimate)
+│   │   ├── main.tsx             # Entry point, portal route detection & Service Worker registration
 │   │   └── styles.css           # Global typography, mobile safe-areas, and touch targets
-│   └── index.ts                 # Hono Cloudflare Worker API router & static asset handler
+│   └── index.ts                 # Hono Cloudflare Worker API router, scheduled() cron export & static asset handler
 ├── public/                      # PWA assets (manifest.webmanifest, sw.js, app icons)
 ├── docs/                        # Specifications, plans, and architectural RFCs
+│   ├── superpowers/plans/       # Feature roadmaps and technical implementation plans
+│   │   └── 2026-10-27-portal-stripe-and-recurring-cron.md # Portal, Stripe & Recurring Cron plan
+├── CUSTOMER_AUTO_FEED_PLAN.md   # Customer discovery, enrichment, and webhook ingestion roadmap
+├── MULTITENANT_PLAN.md          # Multi-tenant D1/R2 scaling and tenant isolation architecture
+├── FEATURE_ADD.md               # Feature wishlist & prioritized product backlog
+├── wrangler.jsonc               # Cloudflare Worker configuration (D1, R2, EMAIL, CRONS, ASSETS)
+└── package.json                 # Dependencies & automation scripts
+```
 │   ├── superpowers/plans/       # Feature roadmaps and technical implementation plans
 ├── CUSTOMER_AUTO_FEED_PLAN.md   # Customer discovery, enrichment, and webhook ingestion roadmap
 ├── MULTITENANT_PLAN.md          # Multi-tenant D1/R2 scaling and tenant isolation architecture
